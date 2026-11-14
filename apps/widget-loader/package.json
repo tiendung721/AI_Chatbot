@@ -1,0 +1,1 @@
+{"name":"@citizen/widget","version":"0.1.0","private":true,"scripts":{"build":"tsc && node ../../scripts/copy-widget.mjs","typecheck":"tsc --noEmit"},"devDependencies":{"typescript":"7.0.2"}}

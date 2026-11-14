@@ -1,0 +1,15 @@
+{
+  "name": "ai-citizen-platform",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@12.18.0",
+  "engines": {"node": ">=24 <25"},
+  "scripts": {
+    "dev": "pnpm --filter @citizen/web dev",
+    "build": "pnpm --filter @citizen/widget build && pnpm --filter @citizen/web build",
+    "typecheck": "pnpm --filter @citizen/web typecheck && pnpm --filter @citizen/widget typecheck",
+    "generate:api": "node scripts/generate-api.mjs",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {"@playwright/test": "1.65.0", "openapi-typescript": "7.13.0"}
+}

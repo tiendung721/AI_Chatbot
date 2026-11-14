@@ -1,2141 +1,534 @@
-# ĐẶC TẢ TRIỂN KHAI CHO CODEX
-# NỀN TẢNG AI CHATBOT CỔNG THÔNG TIN ĐA PHƯỜNG
+# ĐẶC TẢ SẢN PHẨM VÀ TRIỂN KHAI
+# Chatbot hỏi đáp công khai cho cổng thông tin phường/xã
 
-**Phiên bản:** 1.0  
-**Ngày lập:** 10/11/2026  
-**Ngôn ngữ giao diện và tài liệu vận hành:** Tiếng Việt  
-**Tên repository gợi ý:** `ai-citizen-platform`  
-**Loại tài liệu:** Yêu cầu sản phẩm + kiến trúc + hợp đồng dữ liệu + kế hoạch lập trình + tiêu chí nghiệm thu.  
-**Trạng thái:** Đặc tả để bắt đầu xây dựng; không phải thông báo đã có phần mềm hoặc đã kiểm thử sản xuất.
+**Phiên bản:** 2.0 — phạm vi rút gọn theo yêu cầu người dùng.
+**Ngày:** 13/11/2026, Asia/Saigon.
+**Trạng thái:** bộ yêu cầu và phương án để rà soát trước khi code tiếp; không phải biên bản nghiệm thu phần mềm.
+**Thay thế:** bản 1.0 ngày 10/11/2026, được giữ nguyên tại [bản lưu lịch sử](docs/archive/2026-11-10-v1/CODEX_CHATBOT_DA_PHUONG_MASTER_SPEC.md).
 
-> **RÀNG BUỘC QUAN TRỌNG NHẤT:** Model, nhà cung cấp AI, API key, model dự phòng và mọi tham số kỹ thuật AI CHỈ do Developer cấu hình ở backend/hạ tầng. Admin từng phường KHÔNG được chọn, xem danh mục, thay đổi hay ghi đè model hoặc nhà cung cấp. Không có màn hình Model Selection trong Admin Portal. Chặn cả ở API, không chỉ ẩn giao diện.
+Người dùng đã xác định sản phẩm chỉ phục vụ hỏi đáp công khai trên cổng thông tin phường/xã. Bản 2.0 là đặc tả hiện hành. Yêu cầu về hồ sơ cá nhân, đăng nhập công dân, Actions và các năng lực mở rộng trong bản 1.0 không còn là điều kiện hoàn thành. Các con số tải, chất lượng, lưu giữ và khôi phục dưới đây là mục tiêu thiết kế/nghiệm thu; chưa phải kết quả đã đo, SLA hay kết luận pháp lý.
 
-> Các lựa chọn trong tài liệu này là baseline triển khai. Những con số giới hạn, thời gian lưu giữ, tải và hiệu năng được ghi là **mặc định đề xuất** không phải số liệu thực tế đã đo, cam kết SLA hay kết luận pháp lý.
+## 00. Cách sử dụng bộ tài liệu
 
----
+1. Đọc đặc tả này, AGENTS.md, docs/IMPLEMENTATION_STATUS.md và docs/IMPLEMENTATION_PLAN.md trước khi sửa.
+2. docs/REQUIREMENTS_CHECKLIST.md là bảng truy vết yêu cầu → công việc → kiểm tra → bằng chứng. docs/TEST_REPORT.md giữ lịch sử chạy test, không suy từ lịch sử thành kết quả hiện tại.
+3. Các giai đoạn mới dùng mã P0–P5. M0–M8 chỉ dùng để đối chiếu lịch sử; không tái sử dụng tên M4/M5 cho một nội dung khác.
+4. Không viết lại nền tảng đang hoạt động chỉ để đổi cấu trúc. Migration tiến, giữ tài khoản, tài liệu và dữ liệu hiện có.
+5. DTO Admin từ chối trường lạ. Tenant xác định ở server. Runtime PostgreSQL không sở hữu bảng, không superuser/BYPASSRLS; test RLS bằng PostgreSQL thật.
+6. Không ghi secrets vào Git/logs; không reset Git, xóa volume, tự public máy, tạo tài nguyên trả phí hoặc push Git.
+7. Lượt công việc hiện tại chỉ chuẩn bị tài liệu. Bắt đầu code ở lượt sau theo yêu cầu người dùng.
+8. Nếu tài liệu mô tả kiến trúc hiện có khác với mục tiêu ở đây, đánh dấu khoảng trống và lập việc thực hiện; không coi một tính năng được mô tả là đã có code.
 
-## Mục lục
+## 01. Mục tiêu và phạm vi
 
-- [00. Chỉ thị thực thi dành cho Codex](#section-00)
-- [01. Bối cảnh, mục tiêu và phạm vi đã chốt](#section-01)
-- [02. Phân quyền và ranh giới quản trị](#section-02)
-- [03. Kiến trúc và các quyết định triển khai](#section-03)
-- [04. User journeys và phạm vi nghiệm thu sản phẩm](#section-04)
-- [05. Cấu trúc repository và ranh giới module](#section-05)
-- [06. Thiết kế giao diện và hành vi Admin Portal](#section-06)
-- [07. Multi-tenancy và cách ly dữ liệu](#section-07)
-- [08. Mô hình dữ liệu và ràng buộc](#section-08)
-- [09. Đăng nhập, phiên người dùng và bảo vệ hồ sơ cá nhân](#section-09)
-- [10. Knowledge ingestion: file, văn bản và phiên bản](#section-10)
-- [11. Retrieval, evidence và câu trả lời có nguồn](#section-11)
-- [12. Website synchronization](#section-12)
-- [13. Draft, kiểm thử, publish và rollback](#section-13)
-- [14. AI Orchestrator và OpenAI Adapter](#section-14)
-- [15. Capability Registry và tính năng mở rộng](#section-15)
-- [16. Actions, xác nhận và tính nhất quán giao dịch](#section-16)
-- [17. Hợp đồng API ứng dụng](#section-17)
-- [18. Streaming, concurrency và UX khi xảy ra lỗi](#section-18)
-- [19. Bảo mật, riêng tư và các cổng chặn production](#section-19)
-- [20. Cấu hình kỹ thuật chỉ dành cho Developer](#section-20)
-- [21. Triển khai, lệnh chạy và vận hành](#section-21)
-- [22. Usage, quota và dự toán chi phí](#section-22)
-- [23. Kiểm thử bắt buộc và tiêu chí nghiệm thu](#section-23)
-- [24. Dữ liệu mẫu, fixture và demo trung thực](#section-24)
-- [25. Thứ tự triển khai và Definition of Done từng milestone](#section-25)
-- [26. Hồ sơ bàn giao và báo cáo thực thi](#section-26)
-- [27. Điều kiện không được bỏ qua khi thiếu đầu vào thực tế](#section-27)
-- [28. Checklist tự rà soát trước khi Codex kết thúc](#section-28)
-- [29. Prompt khởi động có thể gửi nguyên văn cho Codex](#section-29)
-- [30. Nguồn kỹ thuật và cách sử dụng nguồn](#section-30)
+### 01.1. Sản phẩm cần bàn giao
 
----
+Một nền tảng dùng chung cho nhiều phường/xã. Mỗi đơn vị có một chatbot chính, một Admin đang hoạt động, kho tri thức và bản xuất bản riêng. Người dân mở widget trên cổng thông tin hoặc trang chat độc lập, nhập câu hỏi tiếng Việt và nhận câu trả lời có nguồn kiểm chứng được.
 
-<a id="section-00"></a>
+Admin đưa tài liệu vào kho, kiểm tra nội dung/OCR và metadata, xác nhận được phép dùng công khai, xem thử, kiểm tra rồi xuất bản. Chỉ tài liệu trong bản xuất bản của đúng đơn vị, còn hiệu lực và chưa bị thu hồi mới được dùng cho công dân.
 
-## 00. Chỉ thị thực thi dành cho Codex
+### 01.2. Những thành phần phải có
 
-Bạn là kỹ sư triển khai sản phẩm này trong workspace hiện tại. Hãy **viết phần mềm chạy được**, không chỉ trả lời bằng phương án kiến trúc hoặc tạo giao diện mẫu không có backend.
+| Mã | Nhóm yêu cầu | Kết quả bắt buộc |
+|---|---|---|
+| FR-01 | Đa đơn vị | Cách ly cấu hình, tài liệu, chunks/vectors, phiên chat, phản hồi, usage và audit theo tenant |
+| FR-02 | Admin | Đăng nhập, đổi mật khẩu, quản lý/thu hồi phiên, MFA production, cấp và bàn giao bằng kênh vận hành |
+| FR-03 | Cấu hình nội dung | Tên, mô tả, lời chào, câu gợi ý, Instructions, màu và đầu mối hỗ trợ đã xác minh |
+| FR-04 | Nhập tri thức | Văn bản/Markdown an toàn và upload nhiều file có kết quả riêng từng file |
+| FR-05 | Xử lý tài liệu | Quét mã độc, parser/OCR, kiểm soát tài nguyên, báo lỗi và độ bao phủ |
+| FR-06 | Duyệt và metadata | Sửa extraction có revision, chọn sheet/phần, metadata/nguồn/hiệu lực và xác nhận công khai |
+| FR-07 | Kho và phiên bản | Tìm/lọc/phân trang, chi tiết, phiên bản bất biến khi đã xuất bản, so sánh thay đổi cơ bản |
+| FR-08 | Xuất bản | Lưu nháp → kiểm tra → xem thử → xuất bản; history, rollback, pause, thu hồi |
+| FR-09 | Hỏi đáp | Chat công khai bằng tiếng Việt, xử lý câu hỏi tiếp nối, thiếu nguồn, mơ hồ và mâu thuẫn |
+| FR-10 | Nguồn | Dẫn đúng phiên bản/vị trí, mở phần nội dung được phép, kiểm tra lại khi thu hồi |
+| FR-11 | Nhúng | Widget dùng được trên cổng thông tin khác tên miền; trang chat độc lập; mobile/bàn phím |
+| FR-12 | Độ bền phiên chat | Gửi idempotent, trạng thái đợi/lỗi, SSE reconnect, đọc kết quả và hủy an toàn |
+| FR-13 | Phản hồi và tổng quan | Hữu ích/không hữu ích; đếm lượt hỏi, lỗi, thiếu nguồn và trạng thái tài liệu |
+| FR-14 | Đánh giá chất lượng | Bộ câu hỏi versioned, kết quả gắn corpus/release/runtime, kiểm tra trước thay đổi |
+| FR-15 | Giới hạn sử dụng | Rate limit, số lượt đang xử lý, ngân sách/usage tối thiểu, thông báo hết hạn mức |
+| FR-16 | Vòng đời dữ liệu | Thu hồi, purge, retention, orphan cleanup và chống khôi phục dữ liệu đã xóa |
+| FR-17 | Cấu hình kỹ thuật | Developer quản lý model/provider/key/embedding/runtime; Admin không xem/chọn/ghi đè |
+| FR-18 | Vận hành | Health, logs/metrics an toàn, backup/restore, deployment/rollback và hướng dẫn bàn giao |
 
-### 00.1. Cách bắt đầu
+### 01.3. Ngoài phạm vi phiên bản này
 
-1. Đọc toàn bộ file này theo từng phần nếu công cụ giới hạn dung lượng. Không suy diễn từ phần đầu rồi bỏ các ràng buộc bảo mật, test và milestone ở cuối.
-2. Kiểm tra repository, `AGENTS.md`, cấu trúc hiện có, trạng thái Git và môi trường trước khi sửa. Không ghi đè hoặc xóa thay đổi của người dùng. Tôn trọng các hướng dẫn repository đang có; báo rõ xung đột cần xử lý.
-3. Nếu workspace trống, khởi tạo monorepo theo mục 05. Nếu đã có mã nguồn, tái sử dụng phần phù hợp; ghi quyết định kiến trúc khi phải đổi.
-4. Tạo `docs/IMPLEMENTATION_PLAN.md`, `docs/IMPLEMENTATION_STATUS.md`, `docs/DECISIONS.md`, `docs/EXTERNAL_DEPENDENCIES.md` và checklist các yêu cầu có mã định danh trong file.
-5. Tạo hoặc cập nhật `AGENTS.md` ngắn gọn, trỏ tới đặc tả này và các lệnh kiểm thử. Không chép nguyên tài liệu dài này vào `AGENTS.md`. Tài liệu Codex mô tả cơ chế đọc `AGENTS.md` và giới hạn dung lượng ngữ cảnh hướng dẫn; xem [R01].
-6. Sau kế hoạch ngắn, bắt đầu lập trình theo milestone. Không dừng ở việc lập kế hoạch và hỏi lại những lựa chọn đã được chốt.
-7. Mọi chức năng phải nối đủ UI → API → service → database/worker → trạng thái hiển thị, không đánh dấu hoàn tất chỉ vì đã có nút hoặc route.
-8. Thiếu API key, domain hay API nghiệp vụ thật: dựng interface và môi trường kiểm thử được ghi nhãn rõ; không bịa endpoint, quyền truy cập, dữ liệu hồ sơ hoặc kết quả tích hợp.
-9. Không tự mở port internet, triển khai production, tạo tài nguyên tính phí, gửi tin nhắn thật, push Git hay chạy thao tác phá hủy dữ liệu ngoài phạm vi được phép.
-10. Khi kết thúc một lượt làm việc, ghi rõ: đã làm gì, test nào thực sự chạy, kết quả, phần chưa xong, phụ thuộc còn thiếu và lệnh chạy tiếp. Không gọi toàn bộ sản phẩm là hoàn tất khi mới đạt một milestone.
+| Mã | Nội dung | Cách xử lý |
+|---|---|---|
+| OUT-01 | Đăng nhập/định danh công dân, VNeID/OIDC | Không xây, không yêu cầu IdP để nghiệm thu |
+| OUT-02 | Hồ sơ cá nhân, trạng thái hồ sơ, dữ liệu CCCD/số điện thoại | Không tra cứu; hướng đến kênh chính thức đã cấu hình nếu cần |
+| OUT-03 | Gửi phản ánh, đặt lịch, ghi hồ sơ hoặc giao dịch | Không có Action/connector thực thi; không báo đã tiếp nhận/thực hiện |
+| OUT-04 | Web Search trực tiếp, crawler/đồng bộ website tự động | Để phiên bản sau; Admin upload hoặc nhập nội dung thủ công |
+| OUT-05 | File đính kèm do công dân gửi | Người dân chỉ nhập văn bản; upload Knowledge chỉ dành cho Admin |
+| OUT-06 | Voice, tạo ảnh, code interpreter, MCP/extensions | Không có menu/nút gây hiểu nhầm là dùng được |
+| OUT-07 | Dashboard tài chính/BI sâu, đa vai trò biên tập, quy trình nhiều người duyệt | Giữ tổng quan và kiểm soát chi phí tối thiểu |
+| OUT-08 | Làm mới cổng thông tin, Kubernetes/microservices/HA nhiều vùng, model nội bộ mới | Không bắt buộc; triển khai một host có backup và công bố giới hạn |
 
-### 00.2. Kết quả cần hướng tới
+Hướng dẫn cách làm thủ tục từ tài liệu công khai vẫn thuộc FR-09. Chatbot giải thích giấy tờ/thời hạn theo nguồn, nhưng không tự nộp hồ sơ hay xác nhận trạng thái một cá nhân. Link đến dịch vụ công là link điều hướng thông thường, không phải tích hợp nghiệp vụ.
 
-- Repository có frontend, backend, background workers, database migrations, kiểm thử và Docker.
-- Hệ thống đa tenant thực sự, có ít nhất hai phường dữ liệu mẫu để kiểm tra cách ly.
-- Admin phường tự cập nhật Instructions, Knowledge, nguồn website, công cụ được cấp phép, kiểm thử và xuất bản.
-- Chatbot hỏi đáp dựa trên tài liệu đã xuất bản, có dẫn nguồn kiểm chứng được.
-- Actions được kiểm soát bằng xác thực, phân quyền và xác nhận trước thao tác ghi.
-- Tất cả Capabilities trong phạm vi có đường tích hợp thực tế; tính năng chưa được cấu hình phải báo trạng thái rõ.
-- Có hướng dẫn Windows PowerShell cho phát triển và Linux Docker cho triển khai.
-- Không coi local mock, dữ liệu mẫu hoặc UI đẹp là bằng chứng sẵn sàng vận hành chính thức.
+### 01.4. Giả định đã chọn để lập kế hoạch
 
-### 00.3. Quy tắc chất lượng mã nguồn
+- Bản đầu dùng nguồn công khai được kiểm duyệt; chưa chọn địa phương thì dùng corpus quốc gia và corpus địa phương có nhãn riêng cho test.
+- Một Admin active/tenant; cấp đơn vị/domain/Admin bằng CLI Developer. Không xây portal quản trị nền tảng mới.
+- Giao diện tiếng Việt; FAQ/văn bản dùng Markdown giới hạn, chưa cần rich text editor phức tạp.
+- Website sync, voice và Actions không ngầm trở thành yêu cầu vì một thư viện có hỗ trợ.
+- Model và giá không hardcode. Chọn model/key/ngân sách và phê duyệt luồng dữ liệu khi bước kiểm thử live cần tới.
+- Hạ tầng khởi đầu là single-host Linux Docker; không cam kết HA hoặc một cấu hình máy cụ thể khi chưa đo tải.
+- Các mặc định định lượng trong tài liệu có thể điều chỉnh bằng quyết định có ghi nhận sau khi đo; không âm thầm hạ tiêu chí để đánh dấu đạt.
 
-TypeScript strict; Python có type hints; dữ liệu API có schema; migration có phiên bản; lỗi có mã; kiểm tra quyền ở backend. Không dùng `eval`, không thực thi code từ tài liệu upload, không bỏ xác thực để làm test chạy. Không lưu secrets trong source, log, fixture hoặc frontend bundle. Không tạo hàm rỗng trả success để vượt acceptance test.
+## 02. Vai trò và hành trình
 
-Không tự động chạy `git reset --hard`, xóa volume, drop database, `docker compose down -v` hoặc thay đổi cấu hình hệ thống máy người dùng. Script khởi động phải không phá hủy dữ liệu.
+### 02.1. Quyền
 
----
+| Vai trò | Được làm | Ranh giới |
+|---|---|---|
+| Developer/Operator | Provision tenant/domain/Admin, runtime/secrets, giới hạn, deployment, xử lý sự cố | Không mặc nhiên đọc toàn bộ nội dung chat; truy cập hỗ trợ phải có lý do và audit |
+| Admin đơn vị | Quản lý tri thức/cấu hình nội dung, review, preview, publish, rollback, revoke, xem tổng quan và phản hồi đã che dữ liệu | Chỉ tenant của mình; không model selector, không tenant switcher, không credential hạ tầng |
+| Người dân | Chat công khai, mở nguồn đã công bố, đánh giá câu trả lời | Không đăng nhập, không upload, không thao tác nghiệp vụ, không xem chat người khác |
 
-<a id="section-01"></a>
+Không đăng nhập công dân vẫn cần token phiên chat ẩn danh để kiểm tra quyền sở hữu session/turn/citation. Public key là định danh công khai, không phải mật khẩu hoặc biện pháp chống lạm dụng.
 
-## 01. Bối cảnh, mục tiêu và phạm vi đã chốt
+### 02.2. Luồng Admin
 
-### 01.1. Chín lựa chọn sản phẩm
+1. Đăng nhập, đổi mật khẩu cấp lần đầu; production yêu cầu MFA.
+2. Upload/soạn nội dung; hệ thống hiện job và trạng thái thực.
+3. Kiểm tra toàn bộ trang/sheet/phần, cảnh báo OCR, công thức/ô gộp và metadata.
+4. Xác nhận nội dung được phép công khai; lưu quyết định ai/phiên bản/revision/thời gian.
+5. Chọn phiên bản tài liệu vào nháp; lưu nháp và xem thử có nhãn rõ.
+6. Kiểm tra điều kiện xuất bản, xem thay đổi và nguồn/hiệu lực.
+7. Publish với lý do; chỉ chuyển active release khi transaction hoàn tất.
+8. Khi sai: pause hoặc revoke ngay; sửa bằng phiên bản mới; rollback không gỡ bỏ thu hồi.
 
-| Mã | Quyết định |
+### 02.3. Luồng người dân
+
+Mở widget → thấy tên phường/xã và thông báo AI → nhập câu hỏi → thấy trạng thái → nhận trả lời/nguyên nhân chưa trả lời → mở thẻ nguồn → đánh giá.
+
+Thông báo đầu: không nhập CCCD, tài khoản, hồ sơ hoặc thông tin nhạy cảm; không yêu cầu những dữ liệu đó để hỏi đáp. Lỗi/hết hạn mức phải có lời giải thích dễ hiểu và đường đến đầu mối hỗ trợ có thật nếu đã cấu hình. Khi đơn vị chưa xuất bản, trả trạng thái chưa sẵn sàng, không tự dùng tài liệu nháp/phường khác.
+
+## 03. Kiến trúc và dữ liệu
+
+### 03.1. Giữ baseline hiện có
+
+| Thành phần | Phương án |
 |---|---|
-| REQ-01 | Nhiều phường trên cùng nền tảng; mỗi phường có chatbot, cấu hình, Knowledge, hội thoại và dữ liệu độc lập. |
-| REQ-02 | Công dân hỏi đáp công khai không đăng nhập; nghiệp vụ cá nhân phải xác thực. |
-| REQ-03 | Knowledge nhận từ upload file, văn bản do Admin nhập và đồng bộ website. |
-| REQ-04 | Hỗ trợ đầy đủ Capabilities, có kiến trúc mở rộng công cụ tùy chỉnh. |
-| REQ-05 | Mỗi phường có một Admin đang hoạt động, toàn quyền nghiệp vụ trong phạm vi phường. |
-| REQ-06 | Có Actions/API tra cứu và thao tác được kiểm soát. |
-| REQ-07 | Hạ tầng chưa chốt nhà cung cấp; triển khai được bằng Docker trên Linux, không khóa một cloud. |
-| REQ-08 | Vận hành thực tế; phải đo mức sử dụng, kiểm soát ngân sách, giám sát và sao lưu. |
-| REQ-09 | Mục tiêu là bản vận hành chính thức có quản trị đầy đủ, không chỉ chatbot demo. |
-| REQ-10 | Chọn/đổi model, provider, API key và tham số AI thuộc Developer duy nhất. Đây là yêu cầu đã được người dùng sửa và xác nhận. |
+| UI | Next.js/React/TypeScript, trang /admin, /chat/{public_key}, /embed/{public_key} |
+| Widget | Loader nhỏ tạo iframe từ origin chatbot; CSS cổng thông tin không tràn vào chat |
+| Backend | FastAPI/Pydantic/SQLAlchemy; API và worker dùng chung logic nghiệp vụ |
+| Database | PostgreSQL/pgvector, lexical tiếng Việt + hybrid retrieval |
+| Jobs | Celery/Redis và outbox bền vững trong PostgreSQL |
+| Files | Private S3-compatible storage; MinIO local hiện có cần review riêng trước production |
+| Parser/OCR | Worker/queue riêng, ClamAV, subprocess bị giới hạn, Tesseract vie+eng |
+| AI | Adapter backend hiện có; Mock cho local/test, adapter thật kiểm chứng riêng |
+| Gateway | Nginx/TLS, trust proxy có giới hạn, chính sách nhúng theo tenant |
+| Công cụ | pnpm/uv và lockfiles; migration Alembic; Docker; pytest/Playwright |
 
-Các mô tả trước đây cho phép Admin phường chọn model không còn hiệu lực. Không tái sử dụng tên model, bảng giá, domain hoặc tên API chưa xác minh từ trao đổi cũ làm cấu hình mặc định.
+Không nâng dependency hoặc thay storage trong lượt chuẩn bị đặc tả. Khi triển khai, kiểm tra tài liệu chính thức theo phiên bản khóa và đánh giá license/CVE của thành phần thực dùng.
 
-### 01.2. Định nghĩa
+### 03.2. Luồng xử lý
 
-- **Tenant:** một phường/đơn vị sử dụng, là ranh giới dữ liệu và quyền.
-- **Assistant:** cấu hình chatbot của tenant; bản đầu có một assistant chính/tenant, schema cho phép mở rộng sau.
-- **Developer/Platform Operator:** đội kỹ thuật vận hành nền tảng, không phải Admin phường.
-- **Tenant Admin:** cán bộ quản trị tri thức và nội dung của một phường.
-- **Knowledge:** tài liệu, bài viết, FAQ được xử lý và quản lý phiên bản.
-- **Capability:** khả năng được đội kỹ thuật triển khai và cấp phép, ví dụ tìm tài liệu hoặc tìm web.
-- **Action:** công cụ nghiệp vụ cụ thể, ví dụ tra cứu hồ sơ hoặc gửi phản ánh.
-- **Content Release:** ảnh chụp bất biến của nội dung/cấu hình nghiệp vụ được xuất bản.
-- **Runtime Profile:** cấu hình công nghệ AI do Developer quản lý, độc lập với Content Release.
-- **Extension:** connector/plugin do Developer đăng ký. File PDF/DOCX/XLSX upload làm Knowledge KHÔNG phải extension có quyền chạy code.
-
-### 01.3. Ngoài phạm vi mặc định
-
-Không xây mô hình ngôn ngữ từ đầu; không huấn luyện lại mỗi lần tải tài liệu; không nhúng Custom GPT riêng tư từ tài khoản ChatGPT; không giả lập phiên đăng nhập ChatGPT; không tự tích hợp VNeID hay hệ thống dịch vụ công khi chưa có quyền/API. Không tự động ký, phê duyệt quyết định hành chính hoặc thanh toán thay cơ quan có thẩm quyền.
-
-Tạo mới website cổng thông tin không thuộc phạm vi: sản phẩm cung cấp widget và trang chat độc lập để gắn vào website đang có.
-
----
-
-<a id="section-02"></a>
-
-## 02. Phân quyền và ranh giới quản trị
-
-### 02.1. Ma trận quyền bắt buộc
-
-| Chức năng | Developer / Operator | Admin phường | Công dân |
-|---|---|---|---|
-| Chọn provider, model, embedding model | Có, cấu hình máy chủ | Không | Không |
-| API key, secrets, endpoint AI | Có | Không | Không |
-| Model fallback, token limit, reasoning/temperature | Có | Không | Không |
-| Cấp Capability, quota, connector, domain tin cậy | Có | Không tự nâng quyền | Không |
-| Tạo tenant, domain mapping, cấp lại Admin | Có qua CLI vận hành | Không | Không |
-| Tên chatbot, lời chào, nhận diện giao diện | Hỗ trợ khi được ủy quyền | Có, tenant của mình | Không |
-| Instructions nghiệp vụ | Không sửa thường nhật | Có | Không |
-| Upload/văn bản/đồng bộ Knowledge | Không truy cập mặc nhiên | Có | Không vào kho dùng chung |
-| Bật/tắt Capability đã được cấp | Cấp quyền/thu hồi | Có trong phạm vi được cấp | Sử dụng nếu được phép |
-| Cấu hình tham số Action cho phép | Tạo connector/schema/secrets | Có phần nghiệp vụ được cho phép | Không |
-| Thử và xuất bản nội dung | Không làm thay mặc nhiên | Có | Không |
-| Tra cứu thông tin cá nhân | Không mặc nhiên | Không mặc nhiên | Chỉ dữ liệu thuộc quyền của mình |
-| Thực hiện thao tác ghi nghiệp vụ | Không bỏ qua kiểm soát | Chỉ theo quyền nghiệp vụ riêng | Sau xác thực và xác nhận |
-| Xem model/provider trong UI hoặc API công khai/Admin | Kênh vận hành riêng | Không | Không |
-
-Tài khoản Admin không đồng nghĩa với quyền xem mọi hồ sơ công dân. Lịch sử chat cá nhân phải được che dữ liệu theo chính sách; chức năng hỗ trợ đọc nội dung nhạy cảm cần quyền và quy trình riêng, tắt mặc định.
-
-### 02.2. Một Admin mỗi phường
-
-Một tài khoản Admin hoạt động tại một thời điểm cho mỗi tenant. Không cần xây quy trình nhiều người duyệt ở bản đầu. Vẫn phải có Lưu nháp → Kiểm tra → Xem thử → Xuất bản, audit và rollback.
-
-Cho phép Developer chuyển giao Admin: vô hiệu hóa người cũ, thu hồi phiên, cấp người mới, ghi audit; không dùng chung mật khẩu. Không thêm role “editor” rồi bắt người dùng phải có người duyệt thứ hai.
-
-MFA bắt buộc ở production. Mã khôi phục được bảo vệ; reset MFA qua quy trình vận hành có xác minh, không bằng một API public đơn giản.
-
-### 02.3. Quyền hiệu lực phải tính tại backend
-
-```text
-effective_tools =
-    tools_Developer_granted_to_tenant
-  ∩ tools_enabled_in_published_release
-  ∩ tools_supported_by_active_runtime
-  ∩ tools_allowed_for_authenticated_principal
-  ∩ tools_allowed_by_current_data_policy
-  ∩ tools_with_available_budget
-  - emergency_disabled_tools
+```mermaid
+flowchart LR
+    Portal[Cổng thông tin phường/xã] --> Loader[Widget loader]
+    Loader --> Frame[Iframe origin chatbot]
+    Admin[Admin] --> Gateway[Gateway TLS]
+    Frame --> Gateway
+    Gateway --> API[FastAPI: tenant, quyền, giới hạn]
+    API --> DB[(PostgreSQL RLS)]
+    DB --> Outbox[Outbox]
+    Outbox --> ChatWorker[Worker chat]
+    ChatWorker --> Retrieval[Retrieval được lọc quyền]
+    Retrieval --> DB
+    ChatWorker --> AI[AI adapter backend]
+    ChatWorker --> Check[Kiểm tra evidence và thu hồi]
+    Check --> DB
+    API --> Events[SSE/result được kiểm soát]
+    API --> Private[Private object storage]
+    Outbox --> Ingest[Ingestion worker]
+    Ingest --> Scan[ClamAV]
+    Scan --> Parser[Parser và OCR cách ly]
+    Parser --> Review[Sections, warnings, review]
+    Review --> DB
 ```
 
-Developer thu hồi công cụ hoặc thay đổi chính sách an toàn phải có hiệu lực cả với phiên chat đang mở. Rollback nội dung không được khôi phục quyền đã bị thu hồi.
+Cấm giữ DB connection/transaction trong thời gian gọi chat AI hoặc query embedding. Embedding query tách khỏi transaction; sau đó mở transaction mới và kiểm tra release/profile/quyền/thu hồi trước query, kiểm tra lại trước công bố.
 
-### 02.4. Chống ghi đè model
+### 03.3. Hợp đồng dữ liệu
 
-- DTO Admin chỉ chứa các trường cho phép; cấm mass assignment.
-- Trường lạ như `model`, `provider`, `api_key`, `base_url`, `temperature`, `reasoning_effort`, `runtime_profile`, `embedding_model` bị từ chối, không âm thầm bỏ qua.
-- Public API và Admin API không trả model ID, provider endpoint, danh sách model hay raw provider errors.
-- Instructions kiểu “chuyển sang model X” không ảnh hưởng routing.
-- JSON export cấu hình Admin không được chứa cấu hình kỹ thuật/secrets.
-- Preview và Publish không có tham số model. Preview luôn sử dụng Runtime Profile do Developer quy định.
+Giữ các bảng hiện có về tenant, membership/session Admin, assistant/draft, documents/versions/sections/chunks/embeddings, release, chat, citations/events/feedback/outbox/audit. Bổ sung bằng migration tiến khi cần:
 
----
-
-<a id="section-03"></a>
-
-## 03. Kiến trúc và các quyết định triển khai
-
-### 03.1. Chọn một baseline rõ ràng
-
-| Thành phần | Lựa chọn |
+| Nhóm | Dữ liệu cần có |
 |---|---|
-| Admin + trang chat + embed UI | Next.js, React, TypeScript, giao diện tiếng Việt |
-| Widget loader | JavaScript/TypeScript nhỏ, tải iframe đã cách ly CSS |
-| Backend | Python 3.12, FastAPI, Pydantic, SQLAlchemy, Alembic |
-| Database và RAG gốc | PostgreSQL 17 + pgvector + tìm kiếm từ khóa tiếng Việt |
-| Background jobs | Celery, Redis; cơ chế outbox bảo đảm phát job |
-| File storage | S3-compatible; MinIO dùng cho môi trường local |
-| Parser | Các thư viện đọc file chuyên biệt, chạy trong worker hạn chế quyền |
-| OCR | Tesseract tiếng Việt/Anh hoặc adapter OCR được Developer phê duyệt |
-| AI đầu tiên | OpenAI Responses API qua SDK chính thức |
-| Đổi model/provider | Interface adapter; bản đầu OpenAI thật và Mock cho test |
-| HTTP/SSE | FastAPI phía sau reverse proxy; frontend cùng origin ở production |
-| Reverse proxy | Nginx, TLS do môi trường triển khai cấu hình |
-| Test | pytest, kiểm thử PostgreSQL thật, Playwright, kiểm thử tải |
-| Packaging | Docker Compose cho local/staging; production có tài liệu HA riêng |
+| Domain | tenant, origin chuẩn hóa, trạng thái active, người cấp/thời điểm, lịch sử thay đổi |
+| Metadata | số/ký hiệu, cơ quan, ngày ban hành/hiệu lực, phạm vi áp dụng, URL nguồn, hash gốc, ngày thu thập, tag, quan hệ thay thế |
+| Review | version + revision + selected sections + warnings acknowledged + actor/time |
+| Evaluation | dataset/version/hash, cases, expected evidence/behavior, corpus/release/runtime fingerprints, kết quả/chấm/reviewer |
+| Usage/budget | operation ID, tenant, loại chat/query embedding/indexing, reservation, usage thực, trạng thái giá và đối soát |
+| Lifecycle | deletion/tombstone/retention jobs, object manifest, checkpoint, backup cutoff |
+| Admin security | MFA secret được mã hóa, recovery hash, revocation/rotation audit |
 
-Node.js 24 LTS là baseline của frontend, không phải yêu cầu “phiên bản mới nhất”; tham chiếu vòng đời chính thức [R12]. Chọn và khóa exact patch/dependency/image digest tương thích khi khởi tạo; không để `latest` trong production. Ghi rõ phiên bản vào lockfile và `docs/DEPENDENCIES.md`.
+RLS bắt buộc cho mọi bảng tenant-owned mới. Catalog embedding/pricing global chỉ Developer ghi. Liên kết tài nguyên dùng composite tenant FK. IDs là opaque UUID, timestamp lưu UTC và hiển thị giờ Việt Nam.
 
-**Quyết định RAG:** dùng PostgreSQL + pgvector làm mặc định để quản lý quyền, hiệu lực, thu hồi và chuyển model. Không xây đồng thời hai hệ thống RAG làm tăng độ phức tạp. OpenAI File Search chỉ là Retrieval Adapter tùy chọn sau này, không phải điều kiện để core hoạt động. File Search là một công cụ tìm kiếm hosted riêng, không đồng nhất với khả năng upload mọi loại file của ứng dụng [R06].
+### 03.4. Tenant và cache
 
-**Không triển khai microservices ngay:** một backend có các module nghiệp vụ, nhiều process worker từ cùng codebase. Không tạo Kubernetes, Kafka hoặc hệ thống agent tự quyết định không cần thiết ở bản đầu.
+- Admin tenant từ session đã xác thực; public tenant từ directory public_key, rồi gắn vào chat session.
+- Body/query không được đặt tenant_id để đổi phạm vi. Kiểm tra IDs theo session/tenant kể cả khi RLS đã bật.
+- Transaction-local app.tenant_id; thiếu context default-deny; runtime không sở hữu bảng.
+- Object key có tenant/version; bucket private. Không cho client tự quyết object key.
+- Cache nếu có phải chứa tenant, release hash, runtime/profile, mode và security epoch; invalidation khi revoke/purge/pause.
+- Chưa có nhu cầu đo được thì không thêm answer cache. Lịch sử chat/Preview không dùng chung cache với public.
 
-### 03.2. Sơ đồ luồng
+## 04. Tài liệu và quản lý tri thức
 
-```text
-Website phường                         Admin phường
-    | widget loader/iframe                 | /admin
-    +----------------------+---------------+
-                           |
-                  Nginx / TLS / rate limit
-                           |
-                    FastAPI application
-                           |
-        +------------------+----------------------+
-        | Tenant & Auth    | Assistant & Releases |
-        | Chat & SSE       | Knowledge & Sources  |
-        | Policy Engine    | Actions & Evaluation |
-        +------------------+----------------------+
-                           |
-                  AI Orchestrator
-                  /       |          \
-       RetrievalService  AIAdapter   ActionGateway
-              |             |            |
-       PostgreSQL/pgvector OpenAI     Connectors được duyệt
-              |
-     Object storage + outbox + workers
-     parse / OCR / crawl / index / eval / purge
-```
+### 04.1. Định dạng và giới hạn ban đầu
 
-### 03.3. Ba ranh giới không được trộn
-
-1. **Control plane kỹ thuật:** cấu hình provider/model, credentials, cấp quyền, quota, provision tenant; Developer quản lý bằng file cấu hình/secret manager/CLI, không cần làm một trang model admin riêng trong bản đầu.
-2. **Admin plane nghiệp vụ:** cập nhật nội dung, Knowledge, cấu hình trong hạn mức; tài khoản tenant.
-3. **Citizen plane:** chat công khai và tác vụ riêng sau đăng nhập.
-
-Đường đi dữ liệu: file gốc và chỉ mục lưu tại hạ tầng ứng dụng; chỉ đoạn cần thiết được gửi đến dịch vụ AI theo chính sách. Nếu dùng embeddings từ API ngoài, chính các đoạn văn đưa đi tạo embedding cũng là dữ liệu được gửi ra ngoài. Lưu vector nội bộ không có nghĩa toàn bộ xử lý đã ở nội bộ.
-
-### 03.4. Đổi model sau này
-
-ProviderAdapter chuẩn hóa hội thoại, tool requests, structured output, usage và lỗi; RetrievalService và ActionGateway độc lập provider. Model mới phải qua kiểm thử tương thích và bộ đánh giá trước khi Developer kích hoạt.
-
-Đổi chat model không mặc nhiên phải tạo lại embeddings. Đổi embedding model/dimension/chunker thì tạo profile/chỉ mục mới, reindex, kiểm thử và chuyển index; không trộn vector khác hệ quy chiếu.
-
-Không cam kết mọi provider hỗ trợ ngang nhau mọi công cụ hosted. Capability không tương thích phải báo rõ/khóa hoặc có adapter thay thế đã kiểm thử, không giả vờ hoạt động.
-
----
-
-<a id="section-04"></a>
-
-## 04. User journeys và phạm vi nghiệm thu sản phẩm
-
-### 04.1. Admin đưa tri thức mới lên
-
-Đăng nhập → chọn Knowledge → upload/soạn văn bản → kiểm tra metadata → xem nội dung trích xuất → sửa lỗi nếu cần → tạo index → Preview bản nháp → chạy bộ kiểm thử → xem diff → Xuất bản.
-
-Chỉ xử lý file xong chưa có nghĩa đã xuất bản. Câu hỏi công dân tiếp tục dùng release cũ cho đến khi publish thành công.
-
-### 04.2. Admin chỉnh hành vi chatbot
-
-Sửa Instructions → lưu nháp → xem thử với tài liệu của draft → kiểm tra các giới hạn → publish. Không có model selector. Lỗi nội dung hoặc công cụ vượt quyền phải được chỉ ra cụ thể.
-
-### 04.3. Công dân hỏi thủ tục
-
-Mở widget → hỏi → backend xác định đúng tenant → truy xuất nguồn đang hiệu lực → trả lời tiếng Việt có nguồn → người dùng mở tài liệu/trang tham chiếu → đánh giá hữu ích.
-
-Thiếu nguồn hoặc nguồn mâu thuẫn: nói chưa đủ thông tin, hỏi rõ phần cần thiết hoặc chỉ đến đầu mối đã được cấu hình; không bịa mức phí, hạn xử lý, số điện thoại hay văn bản.
-
-### 04.4. Công dân tra cứu hồ sơ cá nhân
-
-Widget đề nghị đăng nhập → mở trang chat first-party → xác thực qua IdP hợp lệ → backend gọi API theo định danh đã xác thực → kiểm tra chủ thể sở hữu hồ sơ → hiển thị dữ liệu tối thiểu.
-
-Chỉ biết mã hồ sơ/CCCD/số điện thoại không đủ quyền truy cập. Admin phường cũng không được dùng chế độ Preview để giả làm công dân bất kỳ.
-
-### 04.5. Công dân gửi phản ánh
-
-Mô hình hỗ trợ soạn nháp → backend tạo đề nghị hành động → UI hiển thị chính xác nội dung, nơi nhận và dữ liệu sẽ gửi → công dân xác nhận → backend kiểm tra lại → gọi connector → hiện trạng thái và mã tiếp nhận có thật.
-
-Không có bước xác nhận thì không được gửi. Timeout không được coi là thất bại chắc chắn để tự gửi lại.
-
-### 04.6. Thu hồi khẩn cấp
-
-Admin thu hồi tài liệu sai → dữ liệu không còn được dùng ở lượt truy xuất mới → cache liên quan mất hiệu lực → câu trả lời đang tạo được kiểm tra lại trước khi phát hành → lịch sử có nguồn bị thu hồi được gắn cảnh báo phù hợp. Không hứa thu hồi các bản đã được người dùng chụp/copy ra ngoài.
-
-
-<a id="section-05"></a>
-
-## 05. Cấu trúc repository và ranh giới module
-
-```text
-ai-citizen-platform/
-  AGENTS.md
-  README.md
-  CODEX_CHATBOT_DA_PHUONG_MASTER_SPEC.md
-  package.json
-  pnpm-workspace.yaml
-  pnpm-lock.yaml
-  .env.example
-  .gitignore
-  compose.yaml
-  compose.production.example.yaml
-  apps/
-    web/                         # Next.js: /admin, /chat, /embed
-    widget-loader/               # build ra widget.js
-    api/
-      pyproject.toml
-      uv.lock
-      alembic.ini
-      migrations/
-      src/citizen_ai/
-        main.py
-        config.py
-        cli.py
-        common/                  # errors, ids, pagination, clock
-        auth/                    # admin sessions, MFA, OIDC
-        tenancy/                 # TenantContext, directory, RLS
-        assistants/              # drafts, content releases
-        knowledge/               # documents, versions, metadata
-        retrieval/               # lexical, vectors, ranking, evidence
-        ingestion/               # file parsers, antivirus, OCR
-        website_sync/            # safe fetch, diff, scheduling
-        chat/                    # sessions, turns, events, ownership
-        ai/
-          contracts.py
-          orchestrator.py
-          prompts.py
-          adapters/
-            openai_responses.py
-            mock.py
-          runtime_profiles.py
-        capabilities/            # registry, compatibility, grants
-        actions/                 # proposals, confirm, execution
-        connectors/              # vetted application connectors
-        releases/                # publish/rollback/revalidation
-        evaluations/             # datasets, runs, thresholds
-        usage/                   # budgets, cost reconciliation
-        audit/                   # append-only events, redaction
-        storage/                 # S3, signed downloads, cleanup
-        workers/                 # Celery tasks, outbox dispatcher
-        ops/                     # technical CLI; no public model API
-      tests/
-        unit/
-        integration/
-        isolation/
-        security/
-        provider_contracts/
-  packages/
-    api-client/                  # generated types từ OpenAPI
-    ui/                          # components dùng chung
-  fixtures/
-    tenants/
-    knowledge/
-    connectors/
-    evaluation/
-    crawler-site/                # website giả lập để test đồng bộ
-  tests/
-    e2e/
-    load/
-  infrastructure/
-    docker/
-    nginx/
-    monitoring/
-  scripts/
-    bootstrap.ps1
-    dev.ps1
-    check.ps1
-    bootstrap.sh
-    dev.sh
-    check.sh
-  docs/
-    ARCHITECTURE.md
-    DECISIONS.md
-    DATABASE.md
-    SECURITY.md
-    API.md
-    ADMIN_GUIDE.md
-    DEPLOYMENT.md
-    OPERATIONS.md
-    EXTERNAL_DEPENDENCIES.md
-    IMPLEMENTATION_PLAN.md
-    IMPLEMENTATION_STATUS.md
-    TEST_REPORT.md
-    DEPENDENCIES.md
-```
-
-Một Python package dùng chung cho API và worker. Không tạo một bản sao logic parse/retrieval/actions trong frontend hoặc worker riêng. Source tree có thể điều chỉnh nhỏ khi có lý do, nhưng không làm mờ ranh giới quyền.
-
-Dùng `pnpm` workspace và `uv` cho Python; khóa phiên bản trình quản lý. Docker phải tự cài dependency của image, không bắt máy người dùng cài toàn bộ công cụ để chạy compose.
-
----
-
-<a id="section-06"></a>
-
-## 06. Thiết kế giao diện và hành vi Admin Portal
-
-### 06.1. Yêu cầu chung
-
-Thiết kế light enterprise: rõ ràng, nhiều khoảng trắng, dễ thao tác cho cán bộ không biết lập trình. Giao diện tiếng Việt đầy đủ dấu; cùng font, khoảng cách và thành phần giữa các màn. Không dùng placeholder “Lorem ipsum” trong bản bàn giao.
-
-Sidebar có tên phường cố định theo tài khoản; không có tenant switcher cho Admin một phường. Luôn hiển thị trạng thái “Bản nháp”, “Đang hoạt động”, “Có thay đổi chưa xuất bản”. Loading/empty/error/success/permission-denied đều phải có UI thực.
-
-Không có menu Model, Provider, API Key, Temperature, Reasoning hay Advanced AI Settings. Không vô tình lộ các mục đó qua trang analytics, debug, export, playground hoặc developer tools trong response JSON.
-
-### 06.2. Danh mục màn hình
-
-| ID | Màn hình | Nội dung và thao tác |
-|---|---|---|
-| UI-01 | Đăng nhập và MFA | Login, TOTP, hết phiên, đổi mật khẩu, recovery theo quyền |
-| UI-02 | Dashboard | Lượt hỏi, phản hồi, tài liệu lỗi, job đang chạy, release hiện hành |
-| UI-03 | Cấu hình chatbot | Tên, mô tả, Instructions, lời chào, câu gợi ý, đầu mối hỗ trợ |
-| UI-04 | Knowledge | Danh sách tài liệu, nguồn, trạng thái xử lý, public approval, phiên bản |
-| UI-05 | Chi tiết tài liệu | Metadata, trích xuất theo trang/sheet, lỗi OCR, lịch sử, thu hồi |
-| UI-06 | Soạn tri thức | FAQ/văn bản, rich text giới hạn, xem trước, lịch sử |
-| UI-07 | Nguồn website | Domain được cấp, URL/phạm vi crawl, lịch, diff, lỗi đồng bộ |
-| UI-08 | Capabilities | Bật/tắt trong phạm vi cấp phép; trạng thái, quyền, giới hạn |
-| UI-09 | Actions | Danh mục được cấp; tham số nghiệp vụ cho phép; kết nối; test an toàn |
-| UI-10 | Playground | Chat draft, nguồn thật, trace đã làm sạch, không có model selector |
-| UI-11 | Kiểm thử | Bộ câu hỏi, đáp án/kỳ vọng, lần chạy, lỗi và so sánh |
-| UI-12 | Xuất bản/Phiên bản | Diff, readiness checks, publish, rollback, lý do |
-| UI-13 | Hội thoại | Bộ lọc thời gian/trạng thái, phản hồi, riêng tư và redaction |
-| UI-14 | Thống kê sử dụng | Tổng request, chất lượng, quota còn lại; không hiện model/provider |
-| UI-15 | Giao diện & Nhúng | Logo, màu hợp lệ, lời chào, copy embed code, preview mobile |
-| UI-16 | Bảo mật tài khoản | Phiên đăng nhập, MFA, đăng xuất tất cả, lịch sử thay đổi |
-
-Không cho nhập tùy ý JavaScript/CSS/HTML vào giao diện. Branding phải dùng schema màu, logo và text đã kiểm tra. Logo SVG cần sanitizer đáng tin hoặc chỉ chấp nhận ảnh raster.
-
-### 06.3. Bố cục Configure giống tinh thần Custom GPT Builder
-
-Desktop chia hai cột: cấu hình bên trái, Preview bên phải. Các nhóm: Thông tin → Instructions → Knowledge → Capabilities → Actions. Nút “Lưu nháp”, “Kiểm tra”, “Xuất bản” rõ ràng, không gộp thành một nút Save âm thầm ảnh hưởng công dân.
-
-Instructions có độ dài tối đa được backend áp đặt; lưu có version, cảnh báo thay đổi chưa lưu. Chỉ đây là ô văn bản; quyền backend không được chuyển thành các câu hướng dẫn có thể sửa.
-
-### 06.4. Danh sách Knowledge
-
-Mỗi dòng có tên tài liệu, loại file, nguồn, số trang/sheet đã đọc, trạng thái, phiên bản, ngày cập nhật, hiệu lực, nhãn “Đã xác nhận công khai”, đang nằm trong release nào.
-
-Upload nhiều file trả kết quả từng file. Một file lỗi không làm các file khác bị ghi là thành công hoặc mất trạng thái. Có retry một job; retry idempotent, không tạo trùng chunk.
-
-### 06.5. Playground và trace
-
-Hiển thị: intent phân loại, nguồn đã tìm, đoạn tham chiếu, tool đã chạy, thời gian và cảnh báo. Không hiển thị chain-of-thought, credentials, raw prompt cốt lõi hoặc raw response có trường model.
-
-Preview có nhãn bản nháp, không gọi Action ghi thật. Test connector ghi chỉ trong sandbox có dữ liệu giả, không dùng tài khoản công dân thật để “thử nút”.
-
-### 06.6. UI widget
-
-Có mở/đóng, toàn màn hình điện thoại, câu gợi ý, gõ câu hỏi, nguồn dạng thẻ, nút đánh giá, thông báo lỗi và tải lại lượt an toàn. Có nút “Đăng nhập để tra cứu hồ sơ” mở trang first-party. Hỗ trợ bàn phím, focus, screen reader, tương phản phù hợp; đánh giá accessibility trước nghiệm thu.
-
-Nguồn có loại rõ: “Tài liệu của phường”, “Trang chính thức”, “Tài liệu bạn gửi”. Không trình bày tài liệu cá nhân upload như nguồn pháp lý chính thức.
-
----
-
-<a id="section-07"></a>
-
-## 07. Multi-tenancy và cách ly dữ liệu
-
-### 07.1. Xác định tenant
-
-Anonymous request dùng assistant public key để tra directory phía server. Public key là định danh công khai, không phải secret. Tenant của resource được backend xác định, không lấy tùy ý từ body.
-
-Admin tenant lấy từ session đã xác thực. Citizen dùng tenant gắn với chat session, kết hợp danh tính từ token/phiên hợp lệ. Kiểm tra quan hệ giữa principal, tenant, resource và action trên từng request.
-
-Directory public chỉ trả dữ liệu tối thiểu cần dựng widget. Không dùng truy vấn không có tenant để quét bảng hội thoại/tài liệu.
-
-### 07.2. Cách ly PostgreSQL
-
-Tất cả bảng tenant-owned có `tenant_id NOT NULL`; dùng composite foreign key `(tenant_id, resource_id)` khi liên kết tài nguyên tenant để ngăn gắn tài liệu phường B vào release phường A.
-
-Bật RLS, có cả `USING` và `WITH CHECK`; runtime role không là superuser, không có `BYPASSRLS`, không là migration/table-owner role. RLS của PostgreSQL có các ngoại lệ cho owner/superuser, nên không được chỉ tạo policy rồi dùng tài khoản database quyền cao [R10].
-
-Ví dụ nguyên tắc SQL, Codex phải viết migration và test thực tế:
-
-```sql
-ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
-ALTER TABLE documents FORCE ROW LEVEL SECURITY;
-
-CREATE POLICY tenant_documents_policy ON documents
-USING (
-  tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-)
-WITH CHECK (
-  tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-);
-```
-
-Đặt context bằng tham số an toàn trong transaction:
-
-```sql
-SELECT set_config('app.tenant_id', :trusted_tenant_id, true);
-```
-
-`trusted_tenant_id` đến từ TenantContext đã xác thực, không nối chuỗi request vào SQL. Thiếu context phải default-deny. Chỉ dùng transaction-local setting để không rò context qua connection pool. Streaming không giữ một transaction/database connection mở suốt lời gọi AI.
-
-Worker cũng phải thiết lập TenantContext trước truy cập DB. Job payload chỉ mang IDs, không chứa token/secrets/nội dung cá nhân không cần thiết. Worker kiểm tra lại quyền và trạng thái của tài nguyên khi chạy.
-
-### 07.3. Cách ly ngoài database
-
-- Object key: `tenant/{tenant_uuid}/documents/{version_uuid}/...`; bucket private.
-- Cache: key chứa tenant, release, security/revocation epoch, embedding profile và scope truy cập.
-- Không cache chung câu trả lời cá nhân hoặc nội dung attachment.
-- Redis job/event stream, SSE reconnect, vector search, citation endpoint đều kiểm tra tenant/owner.
-- Source URL/file ID do model đưa ra không được truy cập nếu không nằm trong evidence set đã cấp.
-- Không deduplicate public API theo checksum xuyên tenant làm lộ sự tồn tại tài liệu của đơn vị khác.
-- Export, backup restore, audit search và test datasets cũng thuộc ranh giới tenant.
-
-### 07.4. Domain và widget không phải cơ chế xác thực
-
-CSP `frame-ancestors` theo allowlist kiểm soát nhúng. CORS/Origin/domain allowlist không chứng minh danh tính công dân và không bảo vệ API public khỏi mọi script gọi trực tiếp.
-
-Khi dùng iframe cross-origin, Origin của request bên trong thường là chatbot origin, không phải website mẹ. Không xây kiểm soát tenant dựa trên giả định ngược lại. `postMessage` phải kiểm tra `origin`, `source` và schema; không dùng `*` cho dữ liệu nhạy cảm.
-
----
-
-<a id="section-08"></a>
-
-## 08. Mô hình dữ liệu và ràng buộc
-
-### 08.1. Quy ước
-
-UUID cho ID; `timestamptz` lưu UTC; hiển thị `Asia/Ho_Chi_Minh`. Tiền/chi phí dùng Decimal, không float. Mọi entity cần `created_at`, `updated_at`, version/optimistic locking nếu sửa đồng thời. Tên trường code tiếng Anh, nhãn UI tiếng Việt.
-
-Không dùng soft delete như cơ chế xóa dữ liệu duy nhất: phải có purge workflow xử lý bytes, chunks, vector, cache và bản lưu ở provider nếu có.
-
-### 08.2. Bảng cốt lõi
-
-| Bảng | Các trường/ràng buộc chính |
+| Định dạng | Locator và yêu cầu |
 |---|---|
-| `tenants` | id, slug unique, display_name, status, timezone, security_epoch |
-| `tenant_domains` | tenant_id, hostname, kind, verified_at; domain do Developer xác nhận |
-| `tenant_admin_memberships` | tenant_id, account_id, status; unique partial một admin active/tenant |
-| `accounts` | id, email/username, password_hash hoặc external identity; không trộn secrets vào profile |
-| `admin_sessions` | hashed_session_token, account_id, tenant_id, expires_at, revoked_at |
-| `mfa_credentials` | account_id, encrypted_secret, recovery_hashes, enabled_at |
-| `citizen_identities` | tenant_id, issuer, subject, verified claims tối thiểu; unique theo issuer/subject/tenant |
-| `assistants` | tenant_id, id, public_key unique, active_release_id, paused |
-| `assistant_drafts` | tenant_id, assistant_id, revision, config_json, updated_by |
-| `content_releases` | tenant_id, assistant_id, sequence, immutable snapshot, hash, created_by, reason |
-| `release_documents` | tenant_id, release_id, document_version_id; composite FKs |
-| `release_tool_bindings` | tenant_id, release_id, tool_version_id, business_config_snapshot |
-| `knowledge_sources` | tenant_id, type=file/text/website, label, status |
-| `documents` | tenant_id, id, source_id, title, latest_version_id, revoked_at |
-| `document_versions` | tenant_id, document_id, number, object_key, sha256, parse_status, metadata_json |
-| `document_sections` | tenant_id, version_id, locator_json, extracted_text, extraction_warnings |
-| `knowledge_chunks` | tenant_id, version_id, section_id, ordinal, text, normalized_text, checksum |
-| `embedding_profiles` | Developer-managed: provider/model fingerprint, dimensions, metric, chunker_version |
-| `chunk_embeddings` | tenant_id, chunk_id, embedding_profile_id, embedding; unique chunk/profile |
-| `ingestion_jobs` | tenant_id, version_id, status, attempt, progress, error_code |
-| `website_sources` | tenant_id, approved_domain_id, seed_urls, rules_json, schedule, status |
-| `website_pages` | tenant_id, source_id, canonical_url, etag, content_hash, last_success_at |
-| `sync_runs` | tenant_id, source_id, counts, failures, started_at, finished_at |
-| `capability_grants` | tenant_id, capability_id, Developer-approved limits, enabled_by_operator |
-| `tool_definitions` | global vetted catalog: id, version, input_schema, risk, connector_ref |
-| `tenant_tool_bindings` | tenant_id, tool_version_id, approved business_config, granted |
-| `action_proposals` | tenant_id, principal_id, action_version, payload, payload_hash, nonce_hash, expiry, state |
-| `action_executions` | tenant_id, proposal_id, idempotency_key, state, upstream_reference, sanitized_result |
-| `chat_sessions` | tenant_id, assistant_id, mode, owner_id/token_hash, pinned_release_id, expires_at |
-| `chat_turns` | tenant_id, session_id, client_request_id, state, release_id, technical runtime fingerprint |
-| `chat_messages` | tenant_id, session_id, role, content, structured_answer, privacy_class, purge_at |
-| `session_attachments` | tenant_id, session_id, owner_scope, object_key, scan_state, purge_at |
-| `citations` | tenant_id, turn_id, evidence_id, source_type, exact version/locator |
-| `feedback` | tenant_id, turn_id, actor_scope, rating, optional comment |
-| `evaluation_cases` | tenant_id, dataset_version, question, expected_evidence, expected_behavior |
-| `evaluation_runs` | tenant_id, draft_hash/release_id, runtime_fingerprint, results, status |
-| `usage_events` | tenant_id, turn/job/action_id, technical usage, price_snapshot_id, cost_status |
-| `budget_reservations` | tenant_id, operation_id unique, reserved_amount, actual_amount, expiry, state |
-| `audit_events` | tenant_id nullable cho global ops, actor, event_type, resource, redacted diff, request_id |
-| `outbox_events` | tenant_id, event_id, type, payload_ids, status, attempts, next_attempt_at |
-| `deletion_jobs` | tenant_id, target, scope, status, external_deletions, completed_at |
+| PDF text/scan | Trang vật lý, số trang đã xử lý, OCR từng trang cần OCR, cảnh báo layout |
+| DOCX | Heading/mục/bảng; không bịa số trang |
+| XLSX | Sheet, vùng ô, hàng; giữ header/đơn vị/context và quan hệ ô gộp |
+| PPTX | Slide và phần/bảng |
+| TXT/MD | Mục/đoạn/dòng phù hợp |
+| CSV | Hàng/cột, delimiter/encoding có cảnh báo khi suy đoán |
+| HTML upload | Trích text an toàn; không chạy script và không tự tải URL/assets ngoài |
+| PNG/JPG | OCR có locator ảnh, cảnh báo và review |
 
-Global tool definitions, embedding profiles và pricing catalog chỉ Developer được sửa. Admin serialization không lấy trực tiếp ORM object ra JSON.
+Giữ các định dạng đã có để tránh làm mất chức năng. Từ chối rõ .doc/.xls/.xlsm, executable, archive tùy ý, encrypted/password-protected hoặc định dạng không hỗ trợ. Không chạy macro, external links hoặc công thức.
 
-### 08.3. Index và constraints
+Baseline giới hạn hiện có: 25 MiB/file, 10 file/batch, PDF 300 trang, ảnh 25 megapixel, XLSX 100 sheet/100.000 hàng, giải nén 100 MiB, extracted text 8 MiB/job, 10.000 section/job. Phải đếm cả độ bao phủ và giới hạn bộ nhớ/thời gian; quá giới hạn trả lỗi và gợi ý chia file. Kích thước request gateway/API/multipart thống nhất, kiểm tra bytes thực khi không có Content-Length.
 
-Bắt buộc unique `(tenant_id, session_id, client_request_id)` chống tạo lại turn; unique `(tenant_id, principal_id, idempotency_key)` cho thao tác ghi. Cùng idempotency key nhưng payload khác trả conflict.
+Các số này là trần bảo vệ, không cam kết tài liệu tối đa xử lý trong một thời gian cụ thể. Thay đổi trần cần đo tài nguyên và cập nhật tài liệu/test.
 
-Index `(tenant_id, status, created_at)`, `(tenant_id, document_id, version_number)`, `(tenant_id, session_id, created_at)`, source canonical URL theo tenant. Dùng CHECK cho trạng thái hoặc enum migrations rõ ràng.
+### 04.2. State machine và độ bền
 
-Publication release immutable. Nếu cần sửa thì tạo release mới, không UPDATE ngầm JSON của release cũ.
+uploaded → scanning → extracting → needs_review/indexing → ready.
+Nhánh lỗi: failed/quarantined; retry có kiểm soát. Review bắt buộc khi OCR, cảnh báo trích xuất/encoding/table/formula/hidden sheets hoặc thay đổi chọn phạm vi.
 
-### 08.4. Vector storage
+scan_status, parse_status, review_revision, approval và release membership là các chiều riêng. ready không có nghĩa public. Một file lỗi không làm cả batch thành công giả hoặc mất trạng thái file khác.
 
-Lưu `embedding_profile_id` cùng mỗi vector; kiểm tra dimensions tại ingestion và query. Bản đầu có thể dùng cột `vector` không cố định chiều và exact search trong tập đã lọc đúng tenant/profile/release; không tính khoảng cách giữa các profile khác nhau.
+- Batch upload có client_request_id và fingerprint; retry cùng payload không tạo version/object/job trùng; dùng lại ID với payload khác trả conflict.
+- Cùng nội dung nhưng người dùng chủ động tạo version mới là thao tác riêng có xác nhận, không âm thầm gộp giữa tenant.
+- Outbox có unique operation; worker claim/lease/fencing, checkpoint; crash/retry không nhân chunk hoặc hồi sinh nội dung purge.
+- Scanner unavailable/signature quá hạn theo policy thì fail closed; file chưa sạch không được tải gốc hoặc dùng để trả lời.
+- Parser không có DB/key/Internet, chỉ nhận bytes/job metadata cần thiết; timeout/CPU/RAM/PID/temp/output limits; dọn file tạm.
+- Job UI hiển thị processing/failed/retry và mã lỗi an toàn; không hiển thị progress phần trăm giả.
 
-Khi dùng HNSW/IVFFlat, tạo index cho chiều/profile tương thích và benchmark có filter tenant. Approximate indexing có thể trả thiếu kết quả sau filter; pgvector hướng dẫn iterative scans và các cách xử lý [R11]. Không giải quyết thiếu kết quả bằng cách bỏ filter quyền.
+### 04.3. Review, metadata và phiên bản
 
-Không khẳng định exact search đáp ứng mọi quy mô; đưa ANN optimization vào load-test milestone khi số chunk tăng.
+Bắt buộc: title, nguồn gốc tài liệu (upload/văn bản), phân loại dữ liệu, review status, người/thời gian duyệt. Số văn bản, cơ quan, issued_on, effective_from/to, source_url, jurisdiction, topic_tags và supersedes_version_id được hỗ trợ, cho phép null khi chưa biết; không lấy ngày upload làm ngày ban hành.
 
----
+Chuẩn tên trường theo schema hiện có khi hợp lý (issuer, issued_on); UI tiếng Việt. Không tự đổi tên API cũ nếu chưa có migration/compatibility plan.
 
-<a id="section-09"></a>
+XLSX phải hiển thị sheet ẩn/công thức/cached value; sheet ẩn không chọn công khai mặc định. Không có cached value thì cảnh báo và không bịa số. Bảng chunk theo hàng, lặp tiêu đề/đơn vị; hàng quá rộng phải báo lỗi thay vì cắt hỏng quan hệ dữ liệu.
 
-## 09. Đăng nhập, phiên người dùng và bảo vệ hồ sơ cá nhân
+Thay extraction hoặc metadata ảnh hưởng nội dung/hiệu lực làm mất approval, tăng revision. Phiên bản đã nằm trong release bất biến; sửa bằng version mới. Mọi review/publish dùng optimistic revision; stale tab nhận conflict.
 
-### 09.1. Admin
+Chỉ nội dung được xác nhận public mới được gửi tới provider ngoài theo data policy đã duyệt. Preview tài liệu chưa được phép gửi ra ngoài phải báo chưa đủ điều kiện; không dùng Mock thay AI thật trong production để giả rằng Preview đã được kiểm thử.
 
-Dùng server-side session, cookie HttpOnly/Secure/SameSite phù hợp, CSRF cho request ghi và kiểm tra Origin ở route liên quan. Password hash bằng thư viện Argon2id được duy trì; rate-limit đăng nhập và kiểm soát brute force. Không tự viết thuật toán password hash.
+### 04.4. Thu hồi và xóa
 
-Có idle timeout, absolute timeout, revoke-all-sessions, đổi mật khẩu và bắt buộc MFA production. Đăng nhập thất bại không làm lộ account có tồn tại.
+Revoke có hiệu lực ngay với retrieval, cache, answer chưa phát, result/source/SSE đọc lại. Rollback không gỡ revoke. Nội dung đã tải về/chụp màn hình ngoài hệ thống không thể thu hồi bằng API.
 
-Developer provision tenant/admin bằng CLI an toàn. Không seed mật khẩu dùng chung trong code. Local bootstrap sinh mật khẩu một lần hoặc yêu cầu nhập, lưu ngoài Git, yêu cầu đổi; production không tạo tài khoản demo.
+Purge là job riêng sau revoke: object, sections/review text, chunks/vectors, cache và derived answer liên quan; giữ IDs/tombstone/audit tối thiểu để release history không phá FK. Có retry và báo pending/failed/completed thật.
 
-### 09.2. Anonymous chat
+Orphan sweeper đối chiếu DB/object manifest, dùng grace period và dry-run; không xóa object đang upload/job còn lease. Backup/provider copy có policy riêng; không tuyên bố purge đã xóa mọi bản sao. Sau restore phải áp dụng deletion ledger trước khi mở public.
 
-Tạo session token ngẫu nhiên đủ mạnh, lưu bản hash phía server; token chỉ cho phép truy cập đúng session và tenant. ID UUID không thay thế secret session token.
+## 05. Retrieval và câu trả lời
 
-Widget iframe giữ token trong bộ nhớ; không đặt token trong URL, analytics hoặc log. Không dùng localStorage cho token hồ sơ cá nhân. Khi reload, cho phép bắt đầu phiên anonymous mới nếu không có cơ chế resume an toàn đã kiểm thử.
+### 05.1. Chính sách nguồn
 
-Anonymous sessions không có tool cá nhân. Upload của anonymous tắt mặc định; chỉ được bật theo Developer policy cho dữ liệu công khai, giới hạn nhỏ và có cảnh báo.
+Public chỉ truy xuất version thuộc release đang dùng của đúng tenant, ready, scan sạch/không cần scan, review/approval hợp lệ, trong thời gian hiệu lực, chưa revoke/purge. Không dùng draft, nguồn tenant khác hoặc kết quả web ngoài corpus.
 
-### 09.3. Citizen authentication
+Hybrid dùng lexical tiếng Việt + exact cosine pgvector/RRF hiện có. Đánh giá recall/latency trước khi thêm ANN hoặc thay thuật toán. Vector profile gồm model/dimension/chunker fingerprint; đổi profile cần index song song và kiểm chứng trước chuyển. Không trộn embeddings khác hệ quy chiếu.
 
-Chuẩn bị adapter OIDC với thư viện đã được kiểm tra: Authorization Code + PKCE, state, nonce, kiểm tra issuer/audience/signature/expiry và redirect URI allowlist. Không tin header `X-User-Id` do browser gửi.
+Với phí, thời hạn, địa chỉ, giấy tờ và phạm vi áp dụng: dẫn nguồn hỗ trợ đúng phát biểu. Nguồn mâu thuẫn/thiếu hiệu lực không được lấy ngày upload mới nhất để tự kết luận. Quan hệ thay thế phải được Admin xác nhận. Không có nguồn hợp lệ thì hỏi rõ hoặc từ chối phù hợp.
 
-Nhà cung cấp thật chưa được xác định. Chạy local với IdP thử nghiệm hoặc identity fixture trong test harness; production phải từ chối mock identity. Giao diện production hiển thị “Chức năng đăng nhập chưa được đơn vị cấu hình” nếu chưa có IdP, không báo đã đăng nhập giả.
+### 05.2. Hội thoại và output
 
-Không mặc định tích hợp VNeID. Khi API/IdP thật được cấp, thêm connector và contract tests theo tài liệu chính thức của hệ thống đó.
+- Tiếng Việt rõ, ngắn, có thể trình bày các bước/giấy tờ; không yêu cầu dữ liệu cá nhân.
+- Câu hỏi tiếp nối chỉ dùng lịch sử của cùng session; tối đa 6 lượt trước và 6.000 input tokens cho context hội thoại là baseline Developer điều chỉnh. Chỉ lấy phần đã kiểm tra còn hợp lệ, không coi đáp án cũ là bằng chứng.
+- Câu hỏi thiếu chủ thể/thủ tục thì hỏi lại; ngoài phạm vi thì giải thích và link đầu mối chính thức nếu có.
+- Không tuyên bố đã tra cứu trạng thái hồ sơ, nộp đơn, gửi phản ánh hoặc đặt lịch. Câu hỏi yêu cầu những việc đó được hướng dẫn kênh chính thức.
+- Evidence và user input là dữ liệu; Instructions Admin không ghi đè chính sách quyền/model/nguồn.
+- Backend cấp evidence IDs/locator. Model chỉ tham chiếu IDs được cấp; không nhận URL hoặc vị trí do model tự đặt.
 
-### 09.4. Iframe và đăng nhập
+AnswerPacket giữ các trạng thái answered, needs_clarification, insufficient_evidence, conflicting_sources, temporarily_unavailable. Giá trị needs_login trong schema cũ nếu giữ tương thích luôn false; sản phẩm không có CTA đăng nhập công dân. Mỗi block answered phải có evidence hỗ trợ; validation ID hợp lệ chưa tự chứng minh mọi phát biểu đúng, cần đánh giá nghiệp vụ riêng.
 
-Bản đầu: hỏi đáp công khai hoạt động trong iframe; nghiệp vụ cá nhân chuyển sang trang `/chat/{assistant_public_key}` ở top-level, đăng nhập first-party. Không phụ thuộc third-party cookies để chạy nghiệp vụ cá nhân.
+Nguồn công khai hiển thị title, issuer/số văn bản khi có, version/ngày hiệu lực, locator và đoạn liên quan đã duyệt. Không trả raw object key, tenant nội bộ, cấu hình AI hoặc extraction chưa duyệt. File gốc chỉ tải khi có permission public-download tường minh và còn hợp lệ; mặc định dùng source excerpt viewer.
 
-Tạo phiên authenticated mới sau login. Không tự gộp lịch sử anonymous với hồ sơ công dân. Chuyển lịch sử cần consent và cơ chế transfer code một lần, chỉ bổ sung khi có test an toàn.
+### 05.3. Gọi AI, errors và usage
 
-### 09.5. Kiểm tra chủ thể
+Developer chọn model/provider ở backend; cấu hình Admin dùng strict schema. Không endpoint list models, không lộ technical runtime qua dashboard/debug/errors/export.
 
-ActionGateway lấy `subject` và tenant từ context máy chủ. Connector phải kiểm tra hồ sơ thuộc subject hoặc có ủy quyền hợp lệ trước khi trả dữ liệu. Mã hồ sơ là điều kiện tra cứu, không phải chứng cứ sở hữu.
+Adapter chuẩn hóa schema/refusal/incomplete/timeout/429/usage; retry hữu hạn trong deadline, không retry không giới hạn hoặc tự chuyển Mock khi AI thật lỗi. Đổi model/runtime phải chạy lại contract + evaluation liên quan.
 
-Không đưa access token, CCCD đầy đủ, địa chỉ hoặc hồ sơ đầy đủ vào prompt khi chỉ cần trạng thái. Ưu tiên UI thẻ dữ liệu server-rendered cho trường nhạy cảm; model chỉ nhận phần đã giảm thiểu và được phê duyệt.
+Một lượt gắn release snapshot, runtime fingerprint, correlation ID và operation ID. Kiểm tra quyền/nguồn lần cuối trước commit/công bố. AI output được buffer và kiểm tra rồi mới phát answer, không stream nội dung chưa kiểm chứng.
 
+## 06. Admin và xuất bản
 
-<a id="section-10"></a>
+### 06.1. Màn hình bắt buộc
 
-## 10. Knowledge ingestion: file, văn bản và phiên bản
-
-### 10.1. Các định dạng cần hỗ trợ
-
-| Định dạng | Xử lý bắt buộc |
+| UI | Nội dung |
 |---|---|
-| PDF có text | Đọc toàn bộ trang, giữ số trang vật lý, tiêu đề, bảng và cảnh báo trích xuất |
-| PDF scan | OCR `vie+eng` theo trang cần OCR; có trạng thái chất lượng và review |
-| DOCX | Đoạn, heading, bảng, header/footer liên quan; locator theo mục, không bịa số trang |
-| XLSX | Đọc mọi sheet được chọn rõ, giữ tiêu đề cột, dòng, vùng ô, merged cells |
-| PPTX | Đọc từng slide, text và bảng; locator theo slide |
-| TXT/MD | Chuẩn hóa encoding, giữ heading/đoạn |
-| CSV | Phát hiện/cho chọn delimiter và encoding, giữ cột và dòng |
-| HTML | Sanitize, lấy nội dung chính, không thực thi script |
-| PNG/JPG | OCR nếu capability/chính sách cho phép; không coi mô tả ảnh là văn bản pháp lý |
+| UI-A | Login, đổi password, MFA/recovery và phiên tài khoản |
+| UI-B | Tổng quan đơn vị: active release, pause, tài liệu/job lỗi, lượt hỏi/phản hồi tổng hợp |
+| UI-C | Thông tin chatbot/Instructions/lời chào/starters/màu/đầu mối |
+| UI-D | Kho: tìm title/số văn bản/tag, lọc status/type/approval/hiệu lực; phân trang |
+| UI-E | Chi tiết tài liệu: metadata, sections, review, versions và diff cơ bản |
+| UI-F | Preview: hỏi draft, nguồn, cảnh báo, trạng thái test; không raw reasoning |
+| UI-G | Kiểm tra/xuất bản: lỗi chặn, diff, history, lý do publish/rollback |
+| UI-H | Nhúng: copy snippet đã gắn đúng public_key/origin, preview desktop/mobile, domain được cấp |
+| UI-I | Sử dụng cơ bản/phản hồi và audit nội dung đã làm sạch |
 
-File `.doc`, `.xls`, `.xlsm`, file nén, executable và định dạng chưa hỗ trợ phải được từ chối rõ hoặc yêu cầu chuyển đổi. Không nhận rồi trả “đã xử lý” với nội dung rỗng. Không chạy macro, công thức hay external links của Office.
+Có thể ghép các UI thành tab, không bắt buộc chín trang riêng. Không menu citizen login, Actions, Capabilities nâng cao hoặc model selection. Đếm dashboard từ dữ liệu thật; không hardcode biểu đồ/trạng thái.
 
-Các file Knowledge do hệ thống xử lý riêng rồi lập chỉ mục; không giả định OpenAI File Search hỗ trợ trực tiếp mọi định dạng trong bảng [R06].
+Kho dùng page size mặc định 20, tối đa 100; không dùng trần 200 phiên bản để âm thầm bỏ tài liệu. Sắp xếp ổn định theo updated_at/id, filter server-side và RLS trước pagination.
 
-### 10.2. Mặc định giới hạn kỹ thuật đề xuất
+### 06.2. Kiểm tra và publish
 
-- 25 MB/file; 10 file/lượt upload.
-- PDF tối đa 300 trang/file; ảnh tối đa 25 megapixel.
-- XLSX tối đa tổng 100.000 dòng và 100 sheet/file.
-- Văn bản trích xuất có giới hạn bytes/tokens/job để ngăn decompression bomb.
-- Worker có timeout CPU/RAM và số job đồng thời riêng cho OCR.
-- Vượt giới hạn thì fail với thông báo và gợi ý chia file; không âm thầm cắt bớt rồi publish.
-- Mọi giới hạn do Developer cấu hình; Admin chỉ nhìn thấy và không tự tăng.
+Preflight phải kiểm tra: revision/hash đúng, tài liệu ready/scan/review/approval, hiệu lực, phạm vi tenant, nguồn chưa thu hồi, vector đủ/profile đúng khi runtime dùng embeddings, cấu hình hỗ trợ và runtime fingerprint, giới hạn và kết quả evaluation phù hợp khi được yêu cầu.
 
-Các giá trị này là baseline để phát triển, phải điều chỉnh sau thử tải/tài liệu thực tế.
+Kết quả validation gắn draft hash/runtime/corpus hash và hết hạn 30 phút theo baseline. Thay draft/runtime/nguồn làm mất giá trị validation. Trong transaction publish khóa assistant, kiểm tra lại điều kiện thay đổi được, tạo immutable snapshot rồi đổi active pointer. Không giữ transaction qua lời gọi AI/evaluation.
 
-### 10.3. Pipeline trạng thái
+Bản publish đầu và thay runtime/retrieval cần evaluation đầy đủ. Với cập nhật nội dung thường ngày: chạy nhóm câu hỏi liên quan và bộ smoke an toàn đã gắn hash; có thay đổi phải bổ sung case. Bộ evaluation đầy đủ chạy trước release phần mềm và trước go-live. CLI/report là đủ cho v2; không bắt buộc làm evaluation dashboard lớn.
 
-```text
-uploaded
-  -> scanning
-  -> extracting
-  -> needs_review (nếu thiếu text, OCR thấp, metadata mâu thuẫn)
-  -> indexing
-  -> ready
-```
+Rollback tạo quyết định/audit mới trỏ snapshot nội dung cũ sau khi kiểm tra chính sách hiện tại; không hạ runtime/secrets/quyền an toàn. Nếu tài liệu cũ đã revoke/không còn hiệu lực/profile không phù hợp thì chặn rõ.
 
-Nhánh lỗi: `quarantined`, `failed`, `cancelled`. Thu hồi là cờ/trạng thái độc lập áp dụng cả khi đã ready. Publication nằm ở release membership, không dùng `ready == published`.
+## 07. Widget và tích hợp cổng thông tin
 
-Quy trình:
+### 07.1. Phương án được chọn
 
-1. Tạo document version và object key riêng tenant.
-2. Validate extension + MIME/magic bytes + kích thước thực.
-3. File vào vùng quarantine private, quét mã độc.
-4. Worker parse toàn bộ phạm vi được chấp nhận; mỗi trang/sheet có kết quả hoặc lỗi.
-5. Chuẩn hóa Unicode, bỏ nội dung điều hướng lặp có kiểm soát; bảo toàn chữ có dấu.
-6. Lưu extraction warnings và locator.
-7. Admin review nếu cần; sửa nội dung trích xuất phải tạo revision/audit, không thay file gốc.
-8. Chunk theo cấu trúc, gắn metadata.
-9. Tạo embeddings bằng profile do Developer chọn.
-10. Lưu chunks/vectors, đánh dấu ready khi transaction hoàn tất.
-11. Đưa vào draft selection; chỉ release được publish mới dùng cho công dân.
+Một backend chatbot dùng chung, mỗi đơn vị có public_key. Website phường nhúng loader từ origin chatbot qua HTTPS; loader tạo iframe /embed/{public_key}. Chat/API/source viewer nằm cùng origin chatbot. Không tích hợp database/cookie/SSO của cổng thông tin.
 
-Dùng job IDs bền vững và outbox. Celery retry không được tạo duplicate document version/chunk. Retry sau worker crash phải tiếp tục hoặc xử lý lại idempotent.
+Loader suy origin từ script.src, không từ URL nhập tùy ý. Hỗ trợ nhiều origin cổng thông tin do Developer cấp rõ; loại bỏ giới hạn same-origin hiện tại sau khi có kiểm soát domain và browser tests.
 
-### 10.4. Quy tắc cho Excel
+Có hướng dẫn hai cách nhúng: script loader là chính; iframe trực tiếp/trang chat là phương án thay thế khi CSP của cổng chặn script bên ngoài. Đội cổng cấu hình script-src/frame-src chính xác cho origin chatbot.
 
-Phân biệt giá trị ô, công thức và cached value. Không tự tính công thức không đáng tin. Khi không có cached value, giữ cảnh báo và công thức dưới dạng dữ liệu; không bịa kết quả.
+### 07.2. Chính sách an toàn
 
-Không nối các hàng thành text mất tiêu đề cột. Mỗi chunk bảng phải chứa tên sheet, header, row range, đơn vị và context của bảng. Dòng có nội dung nối nhiều ô phải bảo toàn quan hệ.
+- Allowlist exact origin https://host[:port], không wildcard tùy ý; HTTP chỉ local/test. Thay domain có audit và kiểm tra quyền sở hữu qua quy trình vận hành.
+- HTTP response của trang embed có CSP frame-ancestors theo tenant; Admin dùng frame-ancestors 'none'. Header phải được áp dụng trên HTML embed ở gateway/web, không chỉ API hay thẻ meta.
+- X-Frame-Options không đặt SAMEORIGIN trên embed cần nhúng khác origin; admin có chính sách riêng. Không vô hiệu hóa mọi CSP để khắc phục.
+- Nếu dùng postMessage cho resize/close: kiểm tra event.origin, event.source, schema; targetOrigin exact, không '*'; chỉ truyền UI events, không truyền token/chat/credentials cho parent.
+- Anonymous session dùng bearer token trong memory của iframe, không query string, không cookie bên thứ ba; không phụ thuộc đăng nhập parent. Reload tạo phiên mới là hành vi được chấp nhận của v2.
+- Admin cookie Secure/HttpOnly/SameSite và CSRF/Origin vẫn bắt buộc; không nới Admin CORS vì widget.
+- Allowlist nhúng không phải cơ chế xác thực public API; dùng rate/budget limits để kiểm soát lạm dụng. Không coi Origin/Referer/IP là định danh công dân.
+- Proxy chỉ tin forwarded headers từ gateway được cấu hình, chống giả X-Forwarded-For để né rate limit.
 
-Liệt kê cả sheet ẩn và cảnh báo cho Admin; không âm thầm bỏ sheet hoặc mặc định công bố nội dung ẩn. Admin xác nhận phạm vi sheet trước publish. Lưu quyết định vào metadata/version.
+### 07.3. UX và nghiệm thu tích hợp
 
-### 10.5. Metadata tài liệu
+Nút mở/đóng, focus quay về nút khi đóng, Escape, nhãn truy cập, viewport 360/390 px không tràn, nguồn đọc được trên mobile. Loader không chặn trang chủ và báo link chat khi tải thất bại.
 
-```json
-{
-  "title": "Hướng dẫn minh họa",
-  "document_number": null,
-  "issued_by": null,
-  "issued_at": null,
-  "effective_from": null,
-  "effective_to": null,
-  "authority_level": "local_guidance",
-  "jurisdiction": "current_tenant",
-  "source_url": null,
-  "visibility": "admin_only",
-  "approved_for_public": false,
-  "allow_public_download": false,
-  "supersedes_version_id": null,
-  "topic_tags": [],
-  "review_notes": null
-}
-```
+Kiểm tra hai website mẫu khác origin, hai tenant, origin không cấp phép, third-party cookies bị chặn, browser desktop/mobile; Chrome/Edge/Firefox và Safari/iOS có kết quả thực tế trước rollout trên đối tượng tương ứng. Hai origin mô phỏng chỉ chứng minh kỹ thuật; cổng thật vẫn cần nghiệm thu P5.
 
-Đây là schema nội bộ minh họa; thêm validators và enum chính thức. Ngày không xác định phải là null, không lấy ngày upload làm ngày hiệu lực.
+## 08. Hợp đồng API mục tiêu
 
-Admin có thể sửa metadata, nhưng không được tự đặt `tenant_id`, model, embedding profile, secret hay quyền vượt policy. Public approval cần thao tác rõ ràng, có cảnh báo tài liệu chứa dữ liệu cá nhân.
+Giữ prefix /api/v1 và response schema hiện có khi phù hợp; OpenAPI là nguồn sinh TypeScript. Bảng sau nêu hành vi bắt buộc, endpoint mở rộng mới phải được ghi trong docs/API.md khi code.
 
-### 10.6. Văn bản nhập trực tiếp
-
-Editor hỗ trợ heading, paragraph, list, table, link an toàn; lưu canonical Markdown hoặc JSON có schema. Cấm HTML script/embed.
-
-FAQ gồm câu hỏi, đáp án, nguồn căn cứ và ngày hiệu lực nếu có. FAQ không trở thành nguồn có thẩm quyền cao hơn văn bản chính thức chỉ vì được nhập mới hơn.
-
-### 10.7. Xóa và thu hồi
-
-“Thu hồi ngay” là chặn sử dụng cho câu trả lời mới, cập nhật security epoch và cache; “Xóa vĩnh viễn” là workflow riêng xử lý dữ liệu và thời hạn lưu giữ.
-
-Release cũ giữ bằng chứng version IDs nhưng không được phục hồi quyền dùng tài liệu bị thu hồi. Khi xóa pháp lý/bảo mật cần purge nội dung gốc, index, provider copies và cache theo chính sách; audit chỉ giữ metadata tối thiểu được phép.
-
----
-
-<a id="section-11"></a>
-
-## 11. Retrieval, evidence và câu trả lời có nguồn
-
-### 11.1. RetrievalRequest
-
-```text
-trusted tenant_id
-principal scope
-active content_release_id hoặc draft snapshot đã xác thực
-question
-as_of timestamp từ server
-embedding_profile_id từ Runtime Profile
-required visibility/public approval
-current security_epoch
-max evidence/token budget
-```
-
-Không có API public nhận tự do `vector_store_id`, `tenant_id`, SQL filters hoặc document IDs rồi truy xuất.
-
-### 11.2. Quy trình tìm kiếm
-
-1. Xác định phạm vi tài liệu trước retrieval: đúng tenant, release, đã được duyệt công khai, không thu hồi, đúng hiệu lực.
-2. Chuẩn hóa query cho tìm từ khóa: Unicode, không dấu và mapping `đ`/`d`; giữ phiên bản gốc để model hiểu.
-3. Tìm kiếm lexical (PostgreSQL `simple`/unaccent hoặc chiến lược tương thích tiếng Việt) kết hợp pgvector.
-4. Hợp nhất kết quả bằng rank fusion; cấu hình khởi điểm top 20 mỗi nhánh, tối đa 6–8 evidence blocks sau rerank.
-5. Ưu tiên phù hợp hiệu lực, thẩm quyền, địa bàn và loại nguồn; không chỉ ngày đăng mới nhất.
-6. Khử trùng, bổ sung heading/bảng liền kề nhưng không vượt ACL.
-7. Tạo evidence IDs máy chủ, ví dụ `E1`, `E2`; lưu quan hệ với document version/chunk/locator.
-8. Không có đủ evidence thì trả trạng thái thiếu nguồn hoặc cần hỏi rõ. Không lấy điểm cosine tùy tiện làm “độ tin cậy 95%”.
-
-Chunk khởi điểm khoảng 600–900 tokens, overlap 80–120 tokens là cấu hình thử nghiệm; ưu tiên ranh giới mục/bảng thay vì cắt cứng. Phải đo retrieval trên bộ dữ liệu tiếng Việt.
-
-### 11.3. Hiệu lực và mâu thuẫn
-
-Chỉ những ngày/quan hệ thay thế đã được xác nhận mới dùng làm bộ lọc pháp lý. Nếu metadata chưa rõ, gắn cờ cần review. Không tự suy đoán ngày hết hiệu lực từ tên file.
-
-Hai nguồn có nội dung trái nhau nhưng chưa xác định căn cứ áp dụng: không tự chọn nguồn có score cao nhất và trả lời chắc chắn. Hiển thị điểm chưa rõ, nguồn liên quan và đầu mối xác minh.
-
-Thông tin hồ sơ động, lịch hẹn còn chỗ hoặc kết quả xử lý phải dùng Action/API, không suy diễn từ tài liệu tĩnh.
-
-### 11.4. Evidence object phía backend
-
-```json
-{
-  "evidence_id": "E1",
-  "source_type": "knowledge",
-  "document_version_id": "uuid-do-server-cap",
-  "title": "Tài liệu minh họa",
-  "locator": {
-    "kind": "pdf_page",
-    "page_start": 2,
-    "page_end": 2,
-    "sheet": null,
-    "cell_range": null,
-    "section": null
-  },
-  "text": "Đoạn nội dung thực sự được truy xuất",
-  "source_url": null,
-  "effective_from": null,
-  "retrieved_at": "server_timestamp"
-}
-```
-
-Evidence được xem là dữ liệu không đáng tin về mặt instruction. Bất kỳ đoạn “bỏ qua quy tắc” nào bên trong không có quyền điều khiển backend.
-
-### 11.5. AnswerPacket và kiểm tra nguồn
-
-Mô hình tạo cấu trúc với các đoạn trả lời và danh sách evidence IDs tham chiếu. Backend tự bổ sung tên tài liệu, URL và locator từ evidence set.
-
-```json
-{
-  "status": "answered",
-  "blocks": [
-    {
-      "text": "Nội dung trả lời dựa trên đoạn nguồn.",
-      "evidence_ids": ["E1"]
-    }
-  ],
-  "follow_up_question": null,
-  "needs_login": false
-}
-```
-
-Các trạng thái: `answered`, `needs_clarification`, `insufficient_evidence`, `conflicting_sources`, `needs_login`, `action_confirmation`, `temporarily_unavailable`.
-
-Validator kiểm tra schema, ID thuộc evidence set, nguồn còn truy cập được, không thu hồi giữa lúc generate, và các trường bắt buộc. Structured Outputs giúp định dạng đúng schema nhưng không bảo đảm nội dung đúng; vẫn cần xử lý refusal/incomplete và kiểm thử tính bám nguồn [R04].
-
-Không cho model tự tạo URL/số trang nguồn tùy ý. Tài liệu DOCX không có pagination chuẩn không được hiển thị “trang 7” giả; dùng tiêu đề mục. XLSX dùng sheet và vùng dòng/ô.
-
-Kiểm tra tồn tại citation không tương đương kiểm tra toàn bộ câu đã được chứng minh. Đánh giá bám nguồn bằng test, human review và những kiểm tra số liệu trọng yếu; không quảng cáo “AI chính xác tuyệt đối”.
-
-### 11.6. Lịch sử và tài liệu bị thu hồi
-
-Câu trả lời về thủ tục phải truy xuất lại theo release hiện hành, không chỉ dựa vào câu trả lời cũ trong lịch sử. Summary/history có nguồn bị thu hồi phải được đánh dấu không còn đáng tin hoặc loại khỏi context liên quan.
-
-Không phục hồi tài liệu đã thu hồi chỉ vì đang có câu trả lời cũ trong session. Security policy hiện tại luôn thắng content snapshot cũ.
-
-### 11.7. Public source viewer
-
-Route nguồn kiểm tra release/evidence được phép công khai, không cung cấp object-storage URL tùy ý. Public download toàn bộ file chỉ khi `allow_public_download=true` và source được duyệt.
-
-Nội dung source viewer được sanitize. Link web mở an toàn, không cho `javascript:`, `file:` hoặc host không được duyệt.
-
----
-
-<a id="section-12"></a>
-
-## 12. Website synchronization
-
-### 12.1. Nguồn và lịch
-
-Admin chọn domain trong danh sách Developer đã cấp cho tenant, thêm sitemap/RSS/URL bắt đầu và đường dẫn include/exclude. Không mặc định website nào đó thuộc phường hay có CMS API.
-
-Có manual sync, lịch theo múi giờ, pause/resume, xem lần thành công cuối, số bài mới/sửa/mất và lỗi từng URL. Mặc định đề xuất mỗi 6 giờ; không crawl toàn site vô hạn.
-
-Thứ tự connector: CMS API chính thức khi được cung cấp → RSS/sitemap → HTML có bộ chọn nội dung. Browser rendering chỉ thêm khi cần, trong worker riêng đã giới hạn; không yêu cầu bypass cơ chế bảo vệ website.
-
-### 12.2. Safe fetch bắt buộc
-
-Validate scheme/host/port, DNS và IP đích; chặn loopback, link-local, metadata endpoints, mạng private với crawler công khai. Kiểm tra lại redirect và kết nối; tránh tình trạng kiểm DNS một lần rồi HTTP client resolve lại địa chỉ khác. OWASP mô tả rủi ro SSRF và DNS rebinding này [R13].
-
-Domain allowlist phải match theo hostname đã normalize/punycode, không dùng `endswith("gov.vn")` tùy tiện. Chặn URL có userinfo, không cho query chứa token bí mật, giới hạn số redirect, bytes tải về và timeout.
-
-Connector nghiệp vụ được Developer phê duyệt có thể gọi private endpoint theo egress rule riêng; không mở quyền đó cho crawler hoặc URL Admin nhập.
-
-### 12.3. Đồng bộ và phiên bản
-
-Canonicalize URL trong phạm vi đã cấp. Sử dụng ETag/Last-Modified nếu có, content hash làm căn cứ phát hiện thay đổi. Lưu raw snapshot tối thiểu được phép và nội dung chính đã làm sạch.
-
-Một nội dung sửa tạo document version mới, không overwrite version đang publish. Mặc định các thay đổi chờ Admin review/publish. Không tự công bố chỉ vì nguồn vừa đăng.
-
-Lỗi mạng/403 không đồng nghĩa bài đã bị xóa. Trường hợp 404/410 lặp lại theo policy tạo cảnh báo/tombstone; không xóa hàng loạt Knowledge vì một lần website lỗi.
-
-Tôn trọng quyền thu thập và giới hạn tải; không coi robots.txt là bằng chứng đủ về quyền sử dụng dữ liệu. Lịch crawler có lock để không chạy chồng cùng source.
-
-### 12.4. Trace và kiểm thử
-
-Hiển thị diff nội dung, URL gốc, thời điểm crawl, ngày đăng nếu xác minh được, trạng thái chuẩn hóa. Website fixture trong repo phải có bài mới, bài sửa, redirect, bài xóa, menu lặp và nội dung prompt injection để test.
-
----
-
-<a id="section-13"></a>
-
-## 13. Draft, kiểm thử, publish và rollback
-
-### 13.1. Hai version độc lập
-
-**Content Release** thuộc Admin: Instructions, branding, starters, tài liệu/version đã chọn, tool business settings và capability toggles.
-
-**Runtime Profile** thuộc Developer: provider/model, model parameters, embedding profile, provider-supported features, quotas cấp cao và core security policy.
-
-Content Release chỉ lưu fingerprint của môi trường đã kiểm thử làm chứng cứ; Admin không sửa fingerprint và public/Admin API không trả raw runtime settings. Rollback nội dung không đổi model. Developer đổi model qua deployment/config workflow riêng.
-
-### 13.2. Optimistic concurrency
-
-Draft có revision/ETag; PATCH yêu cầu `If-Match`. Hai tab sửa đồng thời phải trả 409/412 có hướng dẫn cập nhật, không ghi đè lặng lẽ.
-
-Evaluation gắn `draft_hash + selected_document_versions + tool_versions + runtime_fingerprint + security_epoch`. Sửa một phần liên quan làm evaluation cũ hết hiệu lực.
-
-### 13.3. Publish transaction
-
-1. Kiểm tra Admin đúng tenant và xác thực đủ mạnh.
-2. Draft revision đúng; tất cả tài liệu được chọn ready, đúng public approval, không bị thu hồi.
-3. Tool/capability vẫn được cấp và runtime đang hỗ trợ.
-4. Evaluation required suite đã pass đúng hash, không dùng kết quả model cũ một cách ngầm định.
-5. Tạo immutable release và release memberships.
-6. Chuyển `active_release_id` trong cùng transaction có khóa chống publish cạnh tranh.
-7. Ghi audit và outbox invalidation.
-8. Chỉ sau commit mới báo publish thành công.
-
-Thất bại giữa chừng giữ nguyên release cũ. Không chuyển active pointer sang index/tài liệu đang xử lý dở.
-
-### 13.4. Phiên chat dùng release nào?
-
-Production: mỗi lượt mới lấy active release ở thời điểm bắt đầu lượt; ghi release vào `chat_turns`. Trong một lượt giữ snapshot nhất quán, nhưng kiểm tra lại revocations/current permissions trước trả kết quả hoặc thực hiện Action.
-
-`chat_sessions.pinned_release_id` chỉ dùng cho Preview/đánh giá có chủ đích; không cho công dân ép session production dùng release đã lỗi thời.
-
-### 13.5. Rollback và emergency pause
-
-Rollback chọn release nội dung cũ, kiểm tra còn tương thích Runtime Profile hiện tại và không chứa dữ liệu/tool đã bị thu hồi. Nếu không đạt thì chặn và chỉ rõ lý do; không dùng rollback làm lối tắt bỏ security policy.
-
-Emergency pause có thể do Developer hoặc Admin trong phạm vi mình: ngừng chat mới/Action nguy hiểm, hiển thị đầu mối hỗ trợ cấu hình sẵn. Thông báo không chứa raw exception.
-
----
-
-<a id="section-14"></a>
-
-## 14. AI Orchestrator và OpenAI Adapter
-
-### 14.1. Quyết định tích hợp
-
-Dùng SDK OpenAI chính thức với Responses API ở backend; không scrape ChatGPT và không dùng Custom GPT ID làm API chatbot. Responses API hỗ trợ input/output và tool interactions; adapter phải xử lý các output item, không giả định mọi phản hồi chỉ có một text string [R02].
-
-Không hardcode tên model từ hội thoại cũ. Developer điền model ID hợp lệ có quyền truy cập vào env/config. Khi chưa có key/model, local có Mock minh bạch; production không được tự chuyển Mock.
-
-Không gán mặc định các tham số như `temperature` hoặc `reasoning_effort` cho mọi model. Compatibility manifest do Developer kiểm tra theo model được chọn; gửi tham số được hỗ trợ.
-
-### 14.2. Interfaces
-
-```python
-# Hợp đồng thiết kế; Codex tạo dataclasses/Pydantic và implementation thực.
-class ModelAdapter(Protocol):
-    async def generate(self, request: GenerationRequest) -> GenerationResult: ...
-    async def stream(self, request: GenerationRequest) -> AsyncIterator[ProviderEvent]: ...
-    async def healthcheck(self) -> ProviderHealth: ...
-
-class EmbeddingAdapter(Protocol):
-    async def embed(self, texts: list[str], profile: EmbeddingProfile) -> EmbeddingBatch: ...
-
-class RetrievalService(Protocol):
-    async def search(self, request: RetrievalRequest) -> EvidenceBundle: ...
-
-class ActionGateway(Protocol):
-    async def prepare(self, request: ActionRequest, context: TrustedContext) -> ActionProposal: ...
-    async def confirm(self, proposal_id: UUID, confirmation: Confirmation, context: TrustedContext) -> Execution: ...
-```
-
-`GenerationRequest` do server dựng; frontend không gửi nguyên provider request. `GenerationResult` chứa answer/tool requests/usage/refusal/error chuẩn hóa. Provider metadata chỉ tồn tại kênh kỹ thuật đã redaction.
-
-### 14.3. Luồng một lượt hỏi
-
-```text
-Authenticate/session ownership
-  -> trusted TenantContext
-  -> select active content release + technical runtime
-  -> apply current policy + reserve budget
-  -> classify intent (classification không cấp quyền)
-  -> gather allowed evidence / expose minimum tools
-  -> invoke model
-  -> execute eligible read tools hoặc prepare write proposal
-  -> validate answer / citations / current revocations
-  -> persist terminal result + usage + audit references
-  -> emit final events
-```
-
-Intent router có thể dùng rule và model; bất kỳ tool call nào vẫn phải qua Policy Engine. Model không quyết định người dùng có quyền hay không.
-
-Đặt giới hạn khởi điểm: tối đa 4 vòng tool, 6 tool calls/turn, timeout tổng và output budget do Developer cấu hình. Khi vượt giới hạn, dừng có trạng thái, không vòng lặp agent vô hạn.
-
-### 14.4. Tool calling đúng contract
-
-Khai báo function tools với JSON Schema được SDK/model hỗ trợ. Nếu dùng strict mode, kiểm tra `additionalProperties=false`, các property required và field nullable đúng schema theo tài liệu [R03].
-
-Parse arguments bằng JSON/schema; không dùng `eval`. Đối chiếu tool ID/version với registry đã cấp trước khi thực thi. Trả tool output theo đúng `call_id`; không chỉ xử lý item đầu tiên. Preserve các item cần thiết của vòng Responses theo SDK đã chọn.
-
-Tool output được sanitize và giới hạn dung lượng; không đưa secret/token/raw HTTP headers vào prompt. External content vẫn là data, không trở thành instruction.
-
-Write executor không được gọi trực tiếp chỉ vì model emit function call. Mô hình chỉ được chuẩn bị proposal; user confirmation endpoint mới thực thi.
-
-### 14.5. Instructions nhiều lớp
-
-- Lớp nền tảng bất biến: bảo mật, quyền, không bịa nguồn, bảo vệ dữ liệu.
-- Lớp nghiệp vụ tenant: cách nói, phạm vi, hướng dẫn ưu tiên, do Admin viết.
-- Runtime context: tenant, thời điểm, trạng thái xác thực đã rút gọn.
-- Evidence/tool results/user attachments: dữ liệu không có quyền sửa các lớp trên.
-
-Backend vẫn phải enforce, không coi prompt layering là tường bảo mật đủ dùng.
-
-### 14.6. Stateful và lưu giữ
-
-Ứng dụng quản lý lịch sử ở database của mình và chủ động gửi context cần thiết. Đề xuất `store=false` cho Responses phù hợp luồng này; không tuyên bố cờ đó đồng nghĩa không có mọi hình thức lưu giữ. Chính sách retention thay đổi theo endpoint/capability và thỏa thuận dữ liệu; phải kiểm tra tài liệu chính thức trước production [R05].
-
-Không dùng response ID của người dùng khác làm conversation state. Không tái sử dụng hosted container/file/thread giữa tenant hoặc người dùng.
-
-### 14.7. Retry, fallback và lỗi
-
-Retry có backoff + jitter cho lỗi tạm thời/429 trong giới hạn; không retry vô hạn. Phân biệt authentication, invalid model, unsupported tool, timeout, quota và provider unavailable.
-
-Fallback chỉ do Developer cấu hình, chỉ dùng khi đủ tương thích quyền/dữ liệu. Không tự chuyển provider ngoài chính sách để “cho có câu trả lời”.
-
-Lời gọi có side effect không bị retry chỉ vì toàn bộ lượt model được retry. ActionGateway idempotency độc lập với model request.
-
-Model thiếu nguồn trả thiếu nguồn; model/API lỗi trả tạm gián đoạn. Không dùng Mock answer hoặc kiến thức tưởng tượng để che lỗi production.
-
-
-<a id="section-15"></a>
-
-## 15. Capability Registry và tính năng mở rộng
-
-### 15.1. Không chỉ tạo các checkbox
-
-Mỗi capability có: ID, version, mô tả, trạng thái implementation, trạng thái cấu hình, principal được phép, data policy, quota, schema thiết lập nghiệp vụ, adapter và kiểm thử.
-
-Hai trục trạng thái:
-
-- Implementation: `not_implemented`, `implemented`, `verified`.
-- Availability: `not_granted`, `not_configured`, `disabled`, `enabled`, `incompatible`, `temporarily_unavailable`.
-
-`enabled` không đồng nghĩa đã được kiểm thử thành công với provider thật. Không hiển thị một công cụ có code rỗng thành “Sẵn sàng”.
-
-### 15.2. Phạm vi phải xây
-
-| ID | Capability | Cách triển khai/kiểm soát | Mặc định vận hành |
-|---|---|---|---|
-| CAP-01 | Knowledge Search | RetrievalService nội bộ, nguồn/version/ACL | Bật với kho đã publish |
-| CAP-02 | Web Search | OpenAI web search adapter, domain allowlist, dẫn nguồn | Bật khi Developer cấp |
-| CAP-03 | Actions | Application Tool Gateway, read/write policies | Theo từng connector |
-| CAP-04 | Phân tích tài liệu người dùng | Attachment riêng phiên, scanner/parser, privacy gates | Yêu cầu đăng nhập cho dữ liệu cá nhân |
-| CAP-05 | Code Interpreter | Sandbox hosted được hỗ trợ hoặc sandbox chuyên biệt đã kiểm định | Tắt, có thể cấp theo nhu cầu |
-| CAP-06 | Image Generation | Adapter tạo ảnh thật, artifact storage và quota | Tắt, chỉ bật khi có mục đích |
-| CAP-07 | Voice Input | Ghi âm có đồng ý, STT, sửa transcript trước gửi | Tùy cấu hình |
-| CAP-08 | Voice Output | Đọc câu trả lời đã kiểm tra, TTS, nút dừng | Tùy cấu hình |
-| CAP-09 | Custom Extensions/MCP | Connector được Developer đăng ký, qua Policy Engine | Chỉ danh mục được duyệt |
-
-Tất cả các dòng thuộc phạm vi sản phẩm hoàn chỉnh. Thứ tự phát triển không đồng nghĩa bỏ hẳn các capability nâng cao. Khi thiếu key/quyền/model tương thích, code adapter và contract tests vẫn phải có, live verification ghi `blocked/not_run`, UI giải thích rõ.
-
-### 15.3. Web Search
-
-Sử dụng công cụ hỗ trợ domain filtering theo tài liệu OpenAI, đồng thời kiểm tra sources/annotations thực trả về và policy của ứng dụng [R07].
-
-Danh sách domain do Developer phê duyệt; Admin có thể chọn tập con/nguồn đã được cấp. Không coi mọi website có đuôi `.gov.vn` là tự động phù hợp mọi câu hỏi.
-
-Không gửi CCCD, mã hồ sơ riêng, access token hoặc hồ sơ nhạy cảm vào query web. Yêu cầu cá nhân dùng Action đã xác thực. Kết quả web không tự đưa vào Knowledge chính thức.
-
-Khi model/tool không hỗ trợ allowlist theo cấu hình mong muốn thì khóa capability hoặc dùng adapter có giới hạn tương đương, không quietly bỏ filter.
-
-### 15.4. User attachments khác Knowledge
-
-Tài liệu công dân gửi chỉ thuộc phiên/người đó, TTL riêng, không xuất hiện trong kho Admin hoặc tìm kiếm của người khác. Khi muốn đưa tài liệu thành tri thức chung phải có quy trình upload/Admin phê duyệt riêng, không có “auto learn”.
-
-Parse/scan và ACL áp dụng trước khi gửi AI. Không chia sẻ provider file ID/container giữa principal. Artifact đầu ra cũng có tenant/session ownership, kiểm tra MIME và TTL; không trả provider URL/token nguyên bản cho frontend.
-
-Xử lý file dài theo giới hạn công khai; thông báo đã phân tích những phần nào, không tuyên bố đọc đầy đủ khi pipeline đã bỏ bớt.
-
-### 15.5. Code Interpreter
-
-OpenAI có Code Interpreter chạy trong môi trường sandbox; cấu hình và khả năng phụ thuộc công cụ/model [R08]. Không thay thế nó bằng `exec()` trên API/worker host.
-
-Không mount secrets, database credentials hoặc Docker socket vào sandbox. Không tự mở network access nếu chưa được phê duyệt. File input/output được cấp theo phiên; có giới hạn thời gian, dung lượng và số lần chạy.
-
-Mọi thao tác nghiệp vụ vẫn đi ActionGateway. Kết quả tính toán không tự được ghi vào hệ thống dịch vụ công. File tạo ra cần thông báo là kết quả hỗ trợ, không phải văn bản hành chính đã ký.
-
-### 15.6. Image Generation
-
-Tích hợp endpoint/tool chính thức được cấu hình, không giả ảnh bằng placeholder rồi báo thành công [R09]. Chỉ gọi theo yêu cầu có chủ đích, có quota và quản lý artifact.
-
-Không phát sinh ảnh để “minh họa” hồ sơ, con dấu, chứng thực hoặc quyết định chính thức khiến người dùng hiểu nhầm. Đánh dấu nội dung do AI tạo; không tự nhận logo/chân dung tạo bằng AI là tư liệu chính thức của phường.
-
-### 15.7. Voice
-
-V1 dùng push-to-talk, không bắt buộc realtime voice liên tục. Hiển thị transcript cho người dùng sửa trước khi gửi; đặc biệt kiểm tra tên riêng, số hồ sơ, số tiền.
-
-TTS chỉ đọc nội dung đã qua validator; không đọc token hoặc thông tin nhạy cảm tự động ngoài ý muốn. Có thông báo giọng đọc do AI tạo, chọn giọng trong danh mục cho phép, nút pause/stop. Các API audio/STT/TTS có hướng dẫn riêng, không dùng chat model name tùy ý thay cho model audio [R14][R15].
-
-### 15.8. Custom extensions và MCP
-
-Bản đầu ưu tiên application-side connectors qua ActionGateway. Thiết kế adapter MCP khi được cấp, nhưng lời gọi vẫn phải đi qua quyền, data policy và xác nhận của ứng dụng.
-
-OpenAI hỗ trợ kết nối MCP; dữ liệu đi tới server bên thứ ba có ranh giới tin cậy riêng [R16]. Không bật tự khám phá rồi thực thi mọi tool của một server do Admin nhập.
-
-Developer đăng ký endpoint, transport, version, danh sách tools, input/output schema, auth secret reference, risk level và egress rules. Admin chỉ bật/cấu hình phần nghiệp vụ đã cho phép.
-
-Không load Python/JS/npm package tùy ý từ file upload. Không cho Admin upload ZIP “extension” rồi chạy trên server.
-
----
-
-<a id="section-16"></a>
-
-## 16. Actions, xác nhận và tính nhất quán giao dịch
-
-### 16.1. Tool catalog
-
-Mỗi tool có definition bất biến theo version, do Developer kiểm soát:
-
-```json
-{
-  "tool_id": "lookup_my_application_status",
-  "version": 1,
-  "display_name": "Tra cứu hồ sơ của tôi",
-  "risk_level": "personal_read",
-  "requires_login": true,
-  "connector_id": "public_service",
-  "connector_version": 1,
-  "required_scope": "application:read:self",
-  "requires_confirmation": false,
-  "input_schema": {
-    "type": "object",
-    "properties": {
-      "application_code": {"type": "string", "minLength": 1, "maxLength": 80}
-    },
-    "required": ["application_code"],
-    "additionalProperties": false
-  },
-  "allowed_business_config_keys": [],
-  "timeout_seconds": 10,
-  "retry_policy": "safe_read_only"
-}
-```
-
-Đây là schema nội bộ, không phải thông số API dịch vụ công đã được cấp. `application:read:self` là permission nội bộ của ứng dụng. Chỉ serialize JSON Schema subset được provider hỗ trợ khi định nghĩa function tool.
-
-Tool arguments không nhận `tenant_id`, `subject`, bearer token, endpoint URL, header auth hoặc secret. Backend inject các phần đó từ trusted context và connector configuration.
-
-### 16.2. Danh mục gốc
-
-| Tool | Tác động | Phụ thuộc |
-|---|---|---|
-| `get_public_contact` | Đọc giờ làm việc/địa chỉ/đầu mối đã cấu hình | Dữ liệu Admin phê duyệt |
-| `search_public_procedures` | Đọc dữ liệu thủ tục công khai | Knowledge/API chính thức nếu có |
-| `lookup_my_application_status` | Đọc thông tin cá nhân | IdP + API hồ sơ thật được cấp |
-| `prepare_citizen_feedback` | Tạo proposal, chưa gửi đi | Nội dung từ người dùng |
-| `submit_citizen_feedback` | Gửi phản ánh thật | Chỉ executor sau xác nhận, connector thật |
-| `prepare_appointment` | Tạo proposal đặt lịch | Connector lịch có thật |
-| `create_appointment` | Đặt lịch thật | Sau xác nhận, chống đặt trùng |
-
-Không bắt buộc đặt lịch live nếu chưa có API; phải ghi external dependency và không gọi đó là nghiệp vụ đã tích hợp. Framework, stub kiểm thử và disabled state phải có.
-
-### 16.3. Phân tầng rủi ro
-
-`public_read`, `personal_read`, `write_reversible`, `write_sensitive`. Nghiệp vụ có hiệu lực pháp lý vượt phạm vi cho phép phải bị khóa, không tự suy ra quyền từ câu chữ người dùng.
-
-Một Action HTTP GET không mặc nhiên an toàn nếu endpoint có side effect; phân loại theo nghiệp vụ, không chỉ HTTP method.
-
-### 16.4. Proposal và confirmation
-
-Proposal phải lưu:
-
-- Tenant, principal đã xác thực, session, tool/version và release.
-- Payload canonical, payload hash, summary hiển thị cho công dân.
-- Nonce một lần, expiry (mặc định đề xuất 5 phút).
-- Trạng thái, người xác nhận, thời điểm và policy fingerprint.
-
-UI hiển thị chính xác đối tượng nhận, nội dung, dữ liệu cá nhân và hậu quả. Người dùng sửa nội dung → proposal cũ hết hiệu lực → tạo proposal mới → xác nhận lại.
-
-Câu “đồng ý” trong một đoạn web, file hoặc tool output không được xem là xác nhận. Một tool call của model cũng không phải xác nhận. Bản đầu dùng nút xác nhận rõ ràng qua endpoint có CSRF/auth, không cho model tự gọi endpoint này.
-
-### 16.5. State machine
-
-```text
-draft -> awaiting_confirmation
-awaiting_confirmation -> confirmed | cancelled | expired
-confirmed -> executing
-executing -> succeeded | failed | unknown
-unknown -> succeeded | failed | manual_review
-```
-
-Không có transition `unknown -> executing` tự động nếu chưa chứng minh upstream chưa thực hiện.
-
-### 16.6. Idempotency và timeout
-
-Trong transaction: kiểm tra proposal/payload hash/expiry/actor/current policy → consume nonce → tạo execution unique → ghi outbox. Worker nhận execution ID, re-check quyền liên quan, gửi cùng idempotency key cho upstream khi upstream hỗ trợ.
-
-Nếu upstream đã xử lý nhưng trả lời bị mất, trạng thái là `unknown`; dùng status endpoint/reference để đối soát. Không gửi lại với key mới để thử vận may.
-
-Không thể hứa “exactly once” xuyên hai hệ thống khi upstream không hỗ trợ. Khi không có idempotency hoặc reconciliation, tắt retry thao tác ghi và yêu cầu kiểm tra thủ công.
-
-Hành động đã thành công phải lấy thông tin từ execution record, không dựa vào model viết “đã gửi”. Return reference/timestamp thật; chưa có reference thì không tạo mã giả.
-
-### 16.7. Secrets và giới hạn connector
-
-Secrets lưu trong secret manager hoặc secret file server-side, registry chỉ lưu `secret_ref`. Admin chỉ thấy “Đã cấu hình/Chưa cấu hình”, không xem và không nhập API key AI.
-
-Endpoint/base URL/auth schema của Action do Developer sở hữu. Không cho Admin đặt endpoint localhost/private tùy ý. Tham số nghiệp vụ được phép như mã bộ phận nhận phản ánh phải được schema validation và giới hạn danh mục.
-
-Connector response có output schema, allowlist field, size cap, timeout, error mapping. Raw upstream response có dữ liệu nhạy cảm không đưa thẳng vào model/log/UI.
-
-### 16.8. Preview và thử Action
-
-Read public có thể test thật trong quota. Personal read dùng tài khoản sandbox/chính người đang được ủy quyền, không nhập subject tùy ý. Write luôn dry-run ở Playground và evaluation.
-
-Production connector chưa cấu hình → `ACTION_NOT_CONFIGURED`; không fallback sang fake success.
-
----
-
-<a id="section-17"></a>
-
-## 17. Hợp đồng API ứng dụng
-
-### 17.1. Quy ước
-
-Prefix `/api/v1`; JSON UTF-8; cursor pagination; UUID; UTC timestamps. Response envelope và error code thống nhất. FastAPI sinh OpenAPI; frontend client/types được generate để tránh lệch schema.
-
-Schema request `extra="forbid"` cho DTO quản trị và các điểm nhạy cảm. Auth/tenant không lấy từ input khi đã có context server.
-
-### 17.2. Nhóm endpoint
-
-| Method | Endpoint | Quyền / chức năng |
-|---|---|---|
-| GET | `/public/assistants/{public_key}` | Cấu hình widget công khai đã lọc |
-| POST | `/public/assistants/{public_key}/sessions` | Tạo anonymous session, rate limit |
-| POST | `/citizen/assistants/{public_key}/sessions` | Tạo session đã xác thực |
-| POST | `/chat/sessions/{session_id}/turns` | Tạo lượt hỏi, idempotency |
-| GET | `/chat/turns/{turn_id}` | Trạng thái/result, kiểm tra ownership |
-| GET | `/chat/turns/{turn_id}/events` | SSE, auth theo session |
-| POST | `/chat/turns/{turn_id}/cancel` | Hủy best-effort, không đảo ngược Action đã gửi |
-| POST | `/chat/turns/{turn_id}/feedback` | Đánh giá đúng phiên |
-| POST | `/chat/sessions/{session_id}/attachments` | Upload riêng phiên nếu được phép |
-| DELETE | `/chat/sessions/{session_id}` | Xóa/đóng theo retention policy |
-| GET | `/sources/{citation_id}` | Nguồn dẫn có kiểm tra ACL/public release |
-| POST | `/auth/admin/login` | Admin password login |
-| POST | `/auth/admin/mfa/verify` | Xác thực MFA |
-| POST | `/auth/logout` | Thu hồi phiên |
-| GET | `/auth/me` | Principal đã lọc, không raw token |
-| GET | `/auth/citizen/start` | Bắt đầu OIDC |
-| GET | `/auth/citizen/callback` | Xác minh OIDC |
-| GET | `/admin/dashboard` | Dashboard tenant |
-| GET | `/admin/assistant` | Cấu hình nghiệp vụ, không runtime model |
-| PATCH | `/admin/assistant/draft` | Lưu nháp với If-Match |
-| POST | `/admin/assistant/preview/sessions` | Preview draft đúng tenant |
-| GET/POST | `/admin/knowledge/documents` | List/tạo metadata |
-| POST | `/admin/knowledge/uploads` | Upload batch, job IDs từng file |
-| GET | `/admin/knowledge/jobs/{id}` | Tiến độ, cảnh báo, lỗi |
-| GET/PATCH | `/admin/knowledge/documents/{id}` | Chi tiết/metadata, optimistic locking |
-| POST | `/admin/knowledge/documents/{id}/versions` | Upload phiên bản mới |
-| POST | `/admin/knowledge/texts` | Văn bản/FAQ mới |
-| POST | `/admin/knowledge/versions/{id}/approve-public` | Xác nhận công khai có audit |
-| POST | `/admin/knowledge/documents/{id}/revoke` | Thu hồi ngay |
-| POST | `/admin/knowledge/documents/{id}/delete-request` | Workflow purge theo policy |
-| GET/POST | `/admin/website-sources` | Nguồn trong domain được cấp |
-| PATCH | `/admin/website-sources/{id}` | Rules/lịch trong giới hạn |
-| POST | `/admin/website-sources/{id}/sync` | Job sync |
-| GET | `/admin/website-sources/{id}/runs` | Trạng thái/diff |
-| GET/PATCH | `/admin/capabilities` | Đọc/cấu hình trong quyền được cấp |
-| GET | `/admin/actions` | Danh mục được cấp, fields nghiệp vụ |
-| PATCH | `/admin/actions/{binding_id}` | Chỉ business config allowlist |
-| POST | `/admin/actions/{binding_id}/test` | Sandbox/dry-run, không bypass |
-| GET/POST | `/admin/evaluation-cases` | Bộ câu hỏi |
-| POST | `/admin/evaluations` | Tạo test run |
-| GET | `/admin/evaluations/{id}` | Kết quả |
-| POST | `/admin/releases/validate` | Preflight publish |
-| POST | `/admin/releases` | Publish đúng hash/revision |
-| GET | `/admin/releases` | Lịch sử |
-| POST | `/admin/releases/{id}/rollback` | Kiểm tra và rollback nội dung |
-| POST | `/admin/assistant/pause` | Dừng chatbot tenant |
-| GET | `/admin/conversations` | Lịch sử theo policy/redaction |
-| GET | `/admin/usage` | Thống kê không model/provider |
-| GET | `/admin/audit` | Nhật ký phạm vi tenant |
-| POST | `/actions/proposals/{id}/confirm` | Citizen auth + nonce + hash |
-| POST | `/actions/proposals/{id}/cancel` | Chủ proposal |
-| GET | `/actions/executions/{id}` | Trạng thái đúng chủ thể |
-| POST | `/audio/transcriptions` | Attachment và quyền hợp lệ |
-| POST | `/audio/speech` | Nội dung đã kiểm tra, quota |
-| GET | `/artifacts/{id}/download` | ACL, TTL, URL ngắn hạn hoặc proxy |
-
-Không tạo public `/admin/models`, `/providers`, `/set-model`, `/run-python`, `/call-url` hoặc `/execute-any-tool`. Công cụ vận hành kỹ thuật là CLI/private control plane.
-
-### 17.3. Ví dụ DTO Admin
-
-```json
-{
-  "revision": 4,
-  "name": "Trợ lý thông tin phường",
-  "description": "Hỗ trợ tra cứu thông tin và hướng dẫn",
-  "instructions": "Trả lời lịch sự, ưu tiên nguồn của phường đã được phê duyệt.",
-  "welcome_message": "Xin chào, bạn cần hỗ trợ nội dung gì?",
-  "conversation_starters": ["Tôi muốn tìm hướng dẫn thủ tục"],
-  "knowledge_version_ids": [],
-  "capabilities": {
-    "knowledge_search": true,
-    "web_search": false,
-    "actions": true,
-    "document_analysis": false,
-    "code_interpreter": false,
-    "image_generation": false,
-    "voice_input": false,
-    "voice_output": false,
-    "custom_extensions": false
-  },
-  "action_binding_ids": [],
-  "branding": {
-    "primary_color": "#145B86",
-    "logo_asset_id": null
-  }
-}
-```
-
-Màu trên là gợi ý giao diện, không phải yêu cầu thương hiệu chính thức. Backend kiểm tra toàn bộ version IDs/action bindings thuộc tenant. `revision`/ETag không phải giấy phép thay quyền.
-
-### 17.4. Ví dụ gửi tin
-
-```json
-{
-  "client_request_id": "uuid-do-client-tao",
-  "message": "Tôi muốn biết cần chuẩn bị gì cho thủ tục này.",
-  "attachment_ids": []
-}
-```
-
-Backend trả `202 Accepted`:
-
-```json
-{
-  "turn_id": "uuid",
-  "state": "queued",
-  "events_path": "/api/v1/chat/turns/uuid/events",
-  "request_id": "uuid"
-}
-```
-
-Không trả hoặc nhận model/provider. Attachment IDs không thuộc session trả 404/403 mà không lộ chủ file.
-
-### 17.5. Error envelope
-
-```json
-{
-  "error": {
-    "code": "ACTION_CONFIRMATION_EXPIRED",
-    "message": "Yêu cầu xác nhận đã hết hạn. Vui lòng kiểm tra lại nội dung trước khi gửi.",
-    "request_id": "uuid",
-    "retryable": false
-  }
-}
-```
-
-Các mã tối thiểu: `AUTH_REQUIRED`, `SESSION_EXPIRED`, `MFA_REQUIRED`, `FORBIDDEN`, `RESOURCE_NOT_FOUND`, `VALIDATION_ERROR`, `VERSION_CONFLICT`, `TENANT_PAUSED`, `RATE_LIMITED`, `BUDGET_EXCEEDED`, `FILE_UNSUPPORTED`, `FILE_TOO_LARGE`, `FILE_QUARANTINED`, `EXTRACTION_REVIEW_REQUIRED`, `KNOWLEDGE_NOT_READY`, `SOURCE_REVOKED`, `CAPABILITY_DISABLED`, `CAPABILITY_INCOMPATIBLE`, `ACTION_NOT_CONFIGURED`, `ACTION_CONFIRMATION_EXPIRED`, `ACTION_PAYLOAD_CHANGED`, `ACTION_OUTCOME_UNKNOWN`, `AI_UNAVAILABLE`.
-
-Log kỹ thuật có detail đã redaction; client chỉ nhận thông tin an toàn. Không trả stack trace, provider account ID hoặc tên model qua lỗi.
-
----
-
-<a id="section-18"></a>
-
-## 18. Streaming, concurrency và UX khi xảy ra lỗi
-
-### 18.1. Hai bước tạo lượt và đọc SSE
-
-POST tạo turn idempotent trong DB + outbox; worker/API executor xử lý; GET events trả stream theo ownership. Frontend dùng `fetch` streaming khi cần Authorization header cho anonymous token; không đặt secret trong query để dùng EventSource.
-
-Auth bằng first-party cookie ở trang chat đã login và CSRF cho request ghi. Kiểm tra quyền khi reconnect, không chỉ lần tạo stream.
-
-### 18.2. Event contract
-
-```text
-turn.created
-turn.status              # searching / preparing / generating / validating
-turn.evidence_ready      # chỉ nguồn được phép hiển thị
-answer.delta             # chỉ nội dung đã qua chính sách theo chế độ bên dưới
-action.confirmation_required
-artifact.ready
-turn.completed
-turn.failed
-turn.cancelled
-```
-
-Mỗi event có `event_id`, `turn_id`, `sequence`, timestamp và payload có schema. Heartbeat định kỳ; replay với Last-Event-ID trong retention window; terminal result luôn lấy lại được từ DB nếu buffer Redis hết.
-
-Không stream chain-of-thought hoặc raw tool arguments nhạy cảm. Dòng “đang tìm nguồn” là status thật, không bịa AI đang kiểm chứng khi pipeline chưa làm.
-
-### 18.3. Không để streaming phá vỡ kiểm tra câu trả lời
-
-Đối với thủ tục, pháp lý, dữ liệu cá nhân và Actions: buffer kết quả có cấu trúc, kiểm tra nguồn/quyền rồi mới phát nội dung answer. UI vẫn nhận status theo thời gian thực. Có thể chia nội dung đã duyệt thành các đoạn để hiển thị, nhưng không gọi đó là raw token stream từ model.
-
-Nếu muốn token streaming trực tiếp cho chào hỏi ít rủi ro, tách chế độ rõ; không áp dụng cho nội dung cần pre-validation.
-
-### 18.4. Concurrency
-
-Một session tối đa một turn đang generate ở baseline. Request trùng `client_request_id` trả lại turn cũ; message mới khi đang xử lý trả trạng thái conflict hoặc queue có thứ tự, chọn một cách và test.
-
-Worker dùng lease/state transition chống chạy đôi; lease hết và crash recovery không được thực thi lại write action vô điều kiện.
-
-Cancel là best-effort: ngắt provider request khi được hỗ trợ, đánh dấu không tiếp tục tool mới; chi phí có thể đã phát sinh. Action đã xác nhận/gửi upstream không được UI báo “đã hủy” chỉ vì người dùng đóng chat.
-
-### 18.5. Khi AI hoặc dịch vụ ngoài lỗi
-
-Hiển thị thông báo đơn giản, trạng thái connector và đầu mối hỗ trợ đã cấu hình. Không trả câu trả lời giả cho mục đích che lỗi. Retry UI dùng request ID/idempotency tương thích, không tạo phản ánh mới.
-
-
-<a id="section-19"></a>
-
-## 19. Bảo mật, riêng tư và các cổng chặn production
-
-### 19.1. Bảo mật ứng dụng
-
-TLS production; request IDs; CSP; chống XSS trong Markdown/HTML; CSRF cho cookie-based writes; CORS đúng origin; giới hạn upload/request body; HTTP client có timeout; log redaction; dependency/security scanning.
-
-Chỉ mount volume cần thiết; container non-root khi khả thi; không mount Docker socket; hạn chế outbound network theo loại worker. Parser/OCR có sandbox/process/resource limits để file hỏng không đánh sập API.
-
-Prompt injection cần defense-in-depth: giới hạn tools, phân quyền thật, evidence không phải instructions, output validation và confirmation. Không coi một classifier “phát hiện prompt độc” là cơ chế bảo vệ duy nhất.
-
-Không ghi lại hidden chain-of-thought. Audit chỉ cần quyết định nghiệp vụ, evidence IDs, tool call đã làm sạch, actor, timestamp và kết quả.
-
-### 19.2. Data policy
-
-Các lớp: `public`, `internal`, `personal`, `restricted`. Kho chatbot công dân chỉ dùng dữ liệu `public` đã được phê duyệt. Tài liệu nội bộ không tự xuất hiện trong chat công khai. Dữ liệu `restricted` chặn gửi ra AI bên ngoài trừ khi có quy trình và phê duyệt phù hợp; bản đầu nên chặn hoàn toàn loại này trong public chatbot.
-
-Chọn cloud trong nước không tự làm cho các request tới OpenAI trở thành xử lý nội địa. Cần lập data-flow inventory: dữ liệu nào, xử lý ở đâu, mục đích, provider retention, người được đọc và cách xóa. Tài liệu OpenAI mô tả data controls theo endpoint; việc bật các hosted tools cần xét riêng [R05].
-
-Không tự tuyên bố “đáp ứng toàn bộ pháp luật” hoặc “được phép xử lý hồ sơ thật” chỉ vì phần mềm có TLS/RLS. Đơn vị quản lý phải phê duyệt hạ tầng, phân loại dữ liệu, yêu cầu an toàn thông tin, hợp đồng xử lý dữ liệu và phương án tích hợp.
-
-### 19.3. Mặc định retention đề xuất, không phải thời hạn luật định
-
-| Loại | Local/test | Production baseline cần phê duyệt |
-|---|---|---|
-| Anonymous raw chat | Ngắn hạn phục vụ debug | Đề xuất 30 ngày hoặc ngắn hơn theo mục đích |
-| Session attachments | 24 giờ | Đề xuất 24 giờ sau xử lý, có giới hạn phiên |
-| Personal chat | Chỉ dữ liệu giả | Tắt lưu raw mặc định; lưu tối thiểu theo policy được duyệt |
-| Evaluation fixtures | Dữ liệu giả | Không đưa PII thật vào regression suite |
-| Usage aggregates | Lưu số liệu test | Tổng hợp không PII, theo nhu cầu kế toán/quota |
-| Security/audit events | Test log | Thời hạn do đơn vị phê duyệt; redaction bắt buộc |
-| Backups | Dữ liệu local | Thời hạn, mã hóa và quy trình xóa được phê duyệt |
-
-Purge có lịch, idempotency và test. Backup có thể chứa dữ liệu đã xóa khỏi live DB; cần lịch hết hạn backup, deletion ledger và quy trình áp dụng lại xóa khi restore. Không hứa xóa tức thì khỏi mọi backup nếu chưa có cơ chế tương ứng.
-
-### 19.4. Go-live gates
-
-Trước khi gọi production ready phải có:
-- Review phân quyền, tenant isolation, secrets, upload, SSRF, prompt injection và Actions.
-- Thẩm định data flow/retention/hạ tầng của đơn vị.
-- Key, model và capability compatibility đã được Developer kiểm thử thật.
-- Domain/TLS, IdP và connector được xác nhận, không placeholder.
-- Live connector ghi được thử trong sandbox, có reconciliation/idempotency.
-- Restore test từ backup; monitoring/alert người nhận rõ.
-- Không có demo credentials, fake citizen login hoặc mock provider trong production.
-- Bộ đánh giá nội dung được cán bộ nghiệp vụ xác nhận.
-- Quy trình xử lý incident, thu hồi tài liệu, dừng Actions và thay Admin.
-
-Chưa đủ gate thì báo đúng phần còn thiếu, không tháo gate để “đưa lên cho nhanh”.
-
----
-
-<a id="section-20"></a>
-
-## 20. Cấu hình kỹ thuật chỉ dành cho Developer
-
-### 20.1. Runtime config
-
-Đọc từ env/secret manager và file cấu hình kỹ thuật có version. Không lưu vào `assistant_drafts.config_json` của Admin.
-
-```yaml
-# technical-runtime.example.yaml
-runtime_version: "dev-config-v1"
-ai:
-  provider: "openai"
-  chat_model: "${OPENAI_CHAT_MODEL}"
-  fallback_model: null
-  store_responses: false
-  timeout_seconds: 60
-  max_tool_rounds: 4
-  max_tool_calls_per_turn: 6
-embedding:
-  provider: "${EMBEDDING_PROVIDER}"
-  model: "${OPENAI_EMBEDDING_MODEL}"
-  dimensions: "${EMBEDDING_DIMENSIONS}"
-  profile_id: "${EMBEDDING_PROFILE_ID}"
-policy:
-  allow_mock_in_production: false
-  personal_data_external_processing_approved: false
-  enforce_write_confirmation: true
-  require_public_source_approval: true
-```
-
-Đây là file cấu hình nội bộ; không gửi nguyên khối cho OpenAI. Mỗi tham số được validate khi startup. `personal_data_external_processing_approved` là policy do Developer thiết lập sau phê duyệt thực tế, không phải một checkbox Admin có thể bật thay cho thủ tục phê duyệt.
-
-### 20.2. `.env.example`
-
-```dotenv
-APP_ENV=local
-APP_NAME=ai-citizen-platform
-APP_PUBLIC_URL=http://localhost:8080
-APP_LOCAL_PORT=8080
-DISPLAY_TIMEZONE=Asia/Ho_Chi_Minh
-
-# Bootstrap sinh secrets/connection strings local. Production dùng secret manager.
-DATABASE_URL=
-MIGRATION_DATABASE_URL=
-REDIS_URL=redis://redis:6379/0
-SESSION_SECRET=
-ENCRYPTION_KEY=
-TRUSTED_PROXY_CIDRS=
-COOKIE_SECURE=false
-
-# Mock chỉ local/test. Đổi sang openai bằng cấu hình Developer.
-AI_PROVIDER=mock
-OPENAI_API_KEY=
-OPENAI_CHAT_MODEL=
-OPENAI_FALLBACK_CHAT_MODEL=
-OPENAI_STORE_RESPONSES=false
-AI_REQUEST_TIMEOUT_SECONDS=60
-
-EMBEDDING_PROVIDER=mock
-OPENAI_EMBEDDING_MODEL=
-EMBEDDING_DIMENSIONS=
-EMBEDDING_PROFILE_ID=
-
-# Technical capabilities; model IDs không xuất hiện ở Admin.
-OPENAI_TRANSCRIPTION_MODEL=
-OPENAI_TTS_MODEL=
-OPENAI_IMAGE_MODEL=
-ENABLE_HOSTED_CODE_INTERPRETER=false
-ENABLE_REMOTE_MCP=false
-
-S3_ENDPOINT=http://minio:9000
-S3_REGION=local
-S3_BUCKET=ai-citizen-private
-S3_ACCESS_KEY_ID=
-S3_SECRET_ACCESS_KEY=
-
-MAX_UPLOAD_MB=25
-MAX_PDF_PAGES=300
-MAX_UPLOAD_FILES_PER_BATCH=10
-ANTIVIRUS_REQUIRED=false
-
-OIDC_ENABLED=false
-OIDC_ISSUER=
-OIDC_CLIENT_ID=
-OIDC_CLIENT_SECRET=
-OIDC_REDIRECT_URI=
-ALLOW_LOCAL_TEST_IDENTITY=true
-
-PERSONAL_DATA_EXTERNAL_PROCESSING_APPROVED=false
-PRICING_CATALOG_PATH=
-RUN_LIVE_API_TESTS=false
-```
-
-Khóa encryption/session/storage là secrets thật, không để `changeme`. Chỉ biến URL công khai cần thiết được phép có prefix `NEXT_PUBLIC_`. Không dùng prefix đó cho provider, model ID, token hoặc database.
-
-### 20.3. Readiness và fail closed
-
-Production startup/readiness chặn nếu:
-- `AI_PROVIDER=mock`, `ALLOW_LOCAL_TEST_IDENTITY=true`, cookie insecure, default secrets.
-- Thiếu model/key cho các capability đang cấp mà không có trạng thái disabled rõ.
-- RLS/migration chưa sẵn sàng, storage private sai, scanner bắt buộc không hoạt động.
-- Cấu hình embedding dimension sai hoặc khác index profile.
-- Thiếu chính sách privacy đã chấp thuận cho luồng personal data được bật.
-
-Không probe provider bằng lời gọi tính phí liên tục ở healthcheck. Tách liveness process, readiness infrastructure và trạng thái provider last-check có cache. Lỗi nhà cung cấp không được gây restart storm cho mọi pod/process.
-
-### 20.4. Model rollout
-
-Developer: sửa runtime config → validate adapter compatibility → chạy regression/sandbox tools → canary nội bộ → triển khai → theo dõi → rollback kỹ thuật nếu cần.
-
-Content release từng phường giữ nguyên nhưng evidence/evaluation có thể cần chạy lại. Runtime fingerprint được ghi ở log kỹ thuật và từng turn để điều tra; Admin chỉ thấy thông báo chung khi một capability tạm không tương thích.
-
-Đổi embedding profile phải build song song index, không đổi biến env rồi dùng vector cũ.
-
----
-
-<a id="section-21"></a>
-
-## 21. Triển khai, lệnh chạy và vận hành
-
-### 21.1. Compose local
-
-Services cần có: `web`, `api`, `worker`, `scheduler`, `postgres`, `redis`, `minio`, `nginx`; antivirus và IdP local có thể là profile riêng. Worker OCR có thể tách queue/process.
-
-Persistent volumes cho DB/storage; healthchecks; migration one-shot job; seed local idempotent. Không chạy migration đua nhau ở mọi API replica. Không tự tạo schema bằng `create_all()` thay migration.
-
-Service nội bộ không public internet. Local bind gateway `127.0.0.1:${APP_LOCAL_PORT}`; chỉ công bố DB/storage console ở localhost khi có profile debug rõ.
-
-### 21.2. Scripts Codex phải thực sự tạo
-
-Các lệnh dưới đây là **hợp đồng cần được triển khai và kiểm thử trong repository**, không phải thông báo chúng đã tồn tại khi mới đọc đặc tả.
-
-Windows PowerShell:
-
-```powershell
-# Từ thư mục repository
-.\scripts\bootstrap.ps1
-.\scripts\dev.ps1
-.\scripts\check.ps1
-docker compose ps
-docker compose logs --tail 100 api worker web
-```
-
-Linux:
-
-```bash
-bash scripts/bootstrap.sh
-bash scripts/dev.sh
-bash scripts/check.sh
-docker compose ps
-docker compose logs --tail 100 api worker web
-```
-
-Script phải:
-- Xác định root tương đối từ vị trí script, hỗ trợ đường dẫn có dấu và khoảng trắng.
-- Kiểm tra Docker CLI **và Docker Engine**, không chỉ `docker --version`.
-- Nếu Windows Docker Desktop Linux Engine chưa chạy, báo hướng dẫn cụ thể và dừng sạch.
-- Kiểm tra port bị chiếm; không tự kill process.
-- Sinh `.env` local an toàn khi chưa có; không ghi đè `.env` đang dùng.
-- Không thay ExecutionPolicy toàn máy, không yêu cầu quyền Admin không cần thiết.
-- Không xóa volume hoặc tải/cài tool ngoài mà không minh bạch.
-- Kết thúc hiển thị URL thật đang chạy, trạng thái health và cách lấy tài khoản local đã provision.
-- Bảo đảm chạy lần hai không reset Knowledge/Admin đang có.
-
-### 21.3. CLI kỹ thuật
-
-Codex tạo CLI với các chức năng sau, tên có thể nhất quán theo package:
-
-```bash
-python -m citizen_ai.cli ops create-tenant --slug ward-demo-a --name "Phuong mau A"
-python -m citizen_ai.cli ops provision-admin --tenant ward-demo-a --email admin-a@example.invalid
-python -m citizen_ai.cli ops rotate-admin --tenant ward-demo-a --email new-admin@example.invalid
-python -m citizen_ai.cli ops grant-capability --tenant ward-demo-a --capability knowledge_search
-python -m citizen_ai.cli ops validate-runtime
-python -m citizen_ai.cli ops seed-demo
-python -m citizen_ai.cli ops run-evaluations --tenant ward-demo-a
-python -m citizen_ai.cli ops backup-check
-```
-
-`seed-demo` phải từ chối production. Password được nhập an toàn hoặc sinh local-only; không truyền password/API key trên command line dễ rơi vào shell history. CLI đặc quyền chạy trong môi trường vận hành được phép, không expose thành route internet.
-
-`provision-admin` có constraint một Admin active, `rotate-admin` thu hồi phiên cũ. CLI quản trị không có quyền đọc mọi hội thoại trừ khi quy trình break-glass riêng được phê duyệt và audit.
-
-### 21.4. Production packaging
-
-Có compose production override, image build nhiều stage, bỏ dev server/source mount, non-root, secrets riêng, resource limits, restart policy, logs và TLS. Docker có hướng dẫn riêng cho khác biệt cấu hình Compose development/production [R18].
-
-Một máy chạy Compose là single-host deployment, không tự có high availability. Hai API instance nhưng chỉ một DB/gateway/storage vẫn có điểm lỗi đơn.
-
-### 21.5. So sánh hạ tầng cần ghi trong DEPLOYMENT.md
-
-| Phương án | Điều cần triển khai | Ranh giới cần làm rõ |
-|---|---|---|
-| Cloud/VPS trong nước | App, DB, storage, backup và giám sát | OpenAI vẫn là dịch vụ ngoài; cần data-flow approval |
-| Cloud quốc tế | Managed services hoặc VM, network, backup | Region, hợp đồng, dữ liệu được phép lưu/xử lý |
-| Hạ tầng đơn vị/on-premise | Server, điện/mạng, patch, backup, nhân sự vận hành | Không có GPU vẫn chạy API; model nội bộ là dự án adapter/hạ tầng riêng |
-
-Không tự khóa vào một vendor, không dựng cloud resources trả phí chỉ để hoàn tất test. Hướng dẫn production phải nêu DNS, cert, firewall, outbound access, migration, rollback và backup restore.
-
-### 21.6. Monitoring và sự cố
-
-Metrics: request count/latency, active turns, queue depth/age, ingestion failures, OCR warnings, retrieval latency, no-evidence rate, model/API errors, tool calls, duplicate action suppression, outcome unknown, quota và purge status.
-
-Logs JSON có correlation IDs; không dùng full citizen message/CCCD làm label metric. Dashboard vận hành kỹ thuật riêng với quyền hạn chế, không mở Grafana public.
-
-Runbooks tối thiểu: provider 429/outage; database/storage full; worker backlog; tài liệu sai; rò tenant nghi ngờ; mất Admin; connector write timeout; ngân sách bất thường; restore và incident notification.
-
-### 21.7. Backup và restore
-
-Backup DB + file manifest + objects cần thiết + cấu hình version, mã hóa và lưu tách môi trường. Keys phục hồi có quy trình riêng.
-
-Mục tiêu đề xuất để đánh giá: RPO không quá 1 giờ, RTO không quá 4 giờ nếu đơn vị chấp thuận và hạ tầng hỗ trợ. Daily backup đơn thuần không đáp ứng RPO này; cần incremental/WAL/PITR phù hợp. Đây là mục tiêu phải đo trong restore drill, không phải cam kết đã đạt.
-
-Sau restore kiểm tra RLS, tenant membership, source/object links, security epoch, deletion ledger và không chạy lại Action write cũ.
-
----
-
-<a id="section-22"></a>
-
-## 22. Usage, quota và dự toán chi phí
-
-### 22.1. Không hardcode bảng giá hoặc model chưa xác minh
-
-Giá phụ thuộc model, input/output/cache, embeddings và hosted tools; lấy rate card chính thức khi Developer cấu hình và lưu ngày hiệu lực [R17]. Không tái dùng con số suy đoán từ trao đổi cũ.
-
-`pricing_catalog` là dữ liệu Developer-managed, có currency, unit, model/tool key, effective_from và source. Giá thiếu phải hiện `unknown/unpriced`, không mặc định bằng 0.
-
-### 22.2. Cost ledger
-
-Mỗi request/turn/job ghi usage thực trả về và cost estimate:
-
-```text
-model_cost =
-  uncached_input_units * uncached_input_rate
-  + cached_input_units * cached_input_rate
-  + billed_output_units * output_rate
-
-total_cost =
-  model_cost
-  + embeddings_cost
-  + hosted_tool_cost
-  + storage_cost
-  + audio/image/ocr_cost_if_applicable
-```
-
-Đối soát tránh đếm hai lần output/reasoning tokens theo cấu trúc usage và pricing của model thực dùng. Tách chi phí từng operation để không vừa tính trong tool vừa tính lại tổng.
-
-Chi phí hạ tầng, backup, monitoring và nhân sự không trộn vào token bill. Báo cáo dự toán phải hiển thị assumptions và phần chưa đo.
-
-### 22.3. Budget control
-
-Đặt per-tenant daily/monthly budget và rate limits do Developer cấp. Trước lời gọi tính phí: reserve có transaction/atomic operation, giới hạn output/tool count; sau kết quả reconcile actual usage và giải phóng phần dư.
-
-Nhiều request song song không được cùng đọc “còn ngân sách” rồi đều tiêu không giới hạn. Crash có cleanup reservation và reconciliation, không đơn giản hoàn tiền toàn bộ khi provider có thể đã tính phí.
-
-Alert ở các mức cấu hình được; vượt ngưỡng dừng công cụ tùy chọn trước. Giới hạn phía ứng dụng không bảo đảm bill provider tuyệt đối không vượt khi telemetry trễ, cần provider quota/alert và đối soát.
-
-### 22.4. Quy mô thiết kế để thử tải
-
-Baseline thử nghiệm đề xuất: 10 tenant, 100.000 câu hỏi/tháng toàn hệ thống, 30 chat turn đồng thời, kho dữ liệu theo bộ fixture mở rộng. Đây là input benchmark, không phải dự báo lưu lượng người dùng đã xác nhận.
-
-Tách kết quả:
-- Platform-only với adapter giả lập latency có kiểm soát.
-- End-to-end live API trên lượng request nhỏ được phép tính phí.
-- Ingestion/OCR riêng.
-- Workload có tenant filter/ACL thật.
-
-Không dùng kết quả mock local để tuyên bố chất lượng hay độ trễ OpenAI thực tế.
-
----
-
-<a id="section-23"></a>
-
-## 23. Kiểm thử bắt buộc và tiêu chí nghiệm thu
-
-### 23.1. Test layers
-
-Unit tests; integration với PostgreSQL/Redis thật; provider adapter contract tests; tenant isolation tests; browser E2E; security tests; AI evaluation; load/soak tests; restore drill.
-
-Không thay PostgreSQL bằng SQLite cho các test RLS, vector hoặc transaction/idempotency. Chạy app queries bằng runtime DB role, không test bằng superuser rồi kết luận RLS đúng.
-
-Live API tests phải opt-in bằng flag và key, giới hạn chi phí; không chạy live mặc định mọi lần CI.
-
-### 23.2. Danh sách kịch bản tối thiểu
-
-| ID | Kịch bản | Kết quả bắt buộc |
-|---|---|---|
-| T-01 | Admin A mở document B bằng ID | Không đọc được, không lộ thông tin |
-| T-02 | Admin A attach document_version B vào release A | Backend/FK từ chối |
-| T-03 | RAG A với câu hỏi trùng nội dung B | Không lấy chunk B |
-| T-04 | Worker thiếu TenantContext | Không truy cập tenant rows |
-| T-05 | Reuse connection pool A rồi B | Không giữ tenant context A |
-| T-06 | Citation/artifact/session IDs của người khác | Từ chối |
-| T-07 | Cache cùng câu hỏi ở hai tenant | Không dùng chung answer/evidence |
-| T-08 | SSE reconnect tới turn khác | Từ chối |
-| T-09 | Runtime role đọc DB không context | Default-deny |
-| T-10 | Admin PATCH chứa model/provider/API key | Validation/authorization từ chối |
-| T-11 | Instructions yêu cầu đổi model | Runtime không đổi |
-| T-12 | Admin export/dashboard/preview/errors | Không lộ model/provider/secrets |
-| T-13 | Developer đổi chat model | Core Knowledge giữ nguyên, test được chạy lại |
-| T-14 | Đổi embedding dimension | Chặn dùng index cũ, yêu cầu reindex |
-| T-15 | Admin bật capability chưa cấp | Từ chối |
-| T-16 | Capability không tương thích runtime | Khóa và báo rõ |
-| T-17 | Upload PDF nhiều trang | Có coverage mọi trang hoặc lỗi rõ |
-| T-18 | PDF scan tiếng Việt | OCR, locator, review warning đúng |
-| T-19 | XLSX nhiều sheet/merged/formula/hidden | Không mất quan hệ; cảnh báo đúng |
-| T-20 | File giả MIME, quá lớn, nén độc hại | Chặn/quarantine |
-| T-21 | File chứa script/macro/prompt injection | Không thực thi/không nâng quyền |
-| T-22 | Upload cùng file/retry worker | Không trùng dữ liệu sai |
-| T-23 | Job worker crash và chạy lại | Trạng thái/chunk nhất quán |
-| T-24 | Tài liệu draft chưa publish | Công dân không thấy |
-| T-25 | Publish khi file chưa ready | Bị chặn |
-| T-26 | Publish đồng thời hai tab | Một commit hợp lệ, conflict rõ |
-| T-27 | Rollback nội dung | Không đổi model/quyền đã thu hồi |
-| T-28 | Thu hồi tài liệu giữa lúc generate | Final answer không dùng nguồn bị thu hồi |
-| T-29 | Metadata hiệu lực không rõ/mâu thuẫn | Không trả chắc chắn sai |
-| T-30 | Không có nguồn | Trả thiếu nguồn, không bịa |
-| T-31 | Model tạo evidence ID/URL giả | Validator loại/chặn |
-| T-32 | DOCX không pagination | Không bịa số trang |
-| T-33 | Query tiếng Việt không dấu/lỗi gõ | Retrieval được đo trên fixture |
-| T-34 | Website mới/sửa/xóa/redirect | Version/diff/tombstone đúng |
-| T-35 | Website timeout/403 | Không xóa cả Knowledge |
-| T-36 | SSRF tới localhost/private/metadata/IPv6 | Bị chặn |
-| T-37 | DNS rebinding/redirect ngoài allowlist | Bị chặn tại kết nối |
-| T-38 | HTML XSS/source link nguy hiểm | Sanitize/chặn |
-| T-39 | Anonymous gọi personal tool | Yêu cầu đăng nhập |
-| T-40 | Citizen A biết mã hồ sơ B | Không đọc được B |
-| T-41 | Fake issuer/audience/nonce/expired OIDC | Từ chối |
-| T-42 | Gửi Action chưa confirm | Không gọi upstream |
-| T-43 | Confirm nonce hết hạn/dùng lại | Từ chối |
-| T-44 | Sửa payload sau confirm | Hash mismatch, yêu cầu xác nhận mới |
-| T-45 | Double-click confirm cùng payload | Tối đa một execution hợp lệ |
-| T-46 | Upstream write timeout sau tiếp nhận | Outcome unknown; không gửi lại mù |
-| T-47 | Playground chạy write tool | Dry-run, không gọi production |
-| T-48 | API nghiệp vụ chưa cấu hình | Báo chưa tích hợp, không fake success |
-| T-49 | Provider 429/timeout/invalid model | Retry giới hạn, lỗi an toàn |
-| T-50 | Tool loop quá giới hạn | Dừng, không vượt quota |
-| T-51 | Structured output refusal/incomplete | Xử lý đúng trạng thái |
-| T-52 | Gửi lại POST message cùng request ID | Trả cùng turn, không nhân chi phí cố ý |
-| T-53 | Mất SSE/kết nối lại | Không mất terminal result/không gửi Action lại |
-| T-54 | Cancel khi Action đã gửi | Không báo hủy thành công giả |
-| T-55 | Nhiều request tiêu budget cùng lúc | Atomic reservation, không race cơ bản |
-| T-56 | Không có pricing entry | Hiển thị unknown, không báo 0 |
-| T-57 | Production dùng mock/default secrets | Readiness fail |
-| T-58 | Purge attachment/chat/document | Bytes/index/cache được xử lý theo policy |
-| T-59 | Backup restore | Dữ liệu, RLS, object links, deletion ledger đúng |
-| T-60 | UI desktop và mobile | Không tràn, đủ trạng thái, keyboard/focus tốt |
-| T-61 | Admin A thử tenant switch/body tenant_id | Không đổi scope |
-| T-62 | Thu hồi Action trong phiên đang mở | Không thực thi Action mới |
-| T-63 | Attachment user vào public Knowledge | Không tự học/không xuất hiện |
-| T-64 | Web search mang thông tin cá nhân | Không gửi query nhạy cảm |
-| T-65 | Code sandbox đọc secret host | Không có quyền/mount |
-| T-66 | Voice/image capability chưa configured | Không fake output |
-| T-67 | Bootstrap lần hai | Không reset dữ liệu/tài khoản |
-| T-68 | Docker Engine chưa chạy trên Windows | Dừng với hướng dẫn đúng, không treo |
-| T-69 | Model/capability raw fields ở browser response | Không xuất hiện |
-| T-70 | Schema API sinh TypeScript | Client typecheck, integration không lệch |
-
-Security fixtures và crawler fixture có thể dùng private hostname trong network test biệt lập với allowlist dành riêng test. Không mang exemption đó sang production.
-
-### 23.3. Bộ đánh giá AI
-
-Tạo ít nhất 50 câu hỏi synthetic ban đầu để chạy regression; trước go-live mở rộng lên bộ 200 câu hỏi hoặc quy mô do đơn vị thống nhất, có review nghiệp vụ.
-
-Mỗi case: tenant, question, expected_behavior, expected_evidence/version, forbidden_content, required_auth, allowed_tools. Có câu hỏi không có đáp án, nguồn mâu thuẫn, văn bản hết hiệu lực, prompt injection và mã hồ sơ của người khác.
-
-Metrics tách biệt: retrieval recall, citation validity, groundedness, độ chính xác nghiệp vụ, từ chối/hỏi rõ đúng, tool authorization, latency và cost. Không dùng cùng một model tự chấm làm chứng cứ duy nhất.
-
-### 23.4. Ngưỡng nghiệm thu đề xuất
-
-- Không chấp nhận lỗi rò tenant, thực thi write trái quyền hoặc lộ secret trong phạm vi bộ test.
-- 100% citation hiển thị phải resolve đến nguồn hợp lệ/được phép; không có nguồn bịa.
-- Độ chính xác nghiệp vụ trên tập đã được đơn vị chấm: mục tiêu ít nhất 95%; phân loại sai số, không giấu câu khó.
-- Test suite bảo mật trọng yếu pass; không có critical/high issue chưa được xử lý hoặc chấp thuận theo quy trình.
-- P95 platform overhead mục tiêu dưới 1 giây cho endpoint nhẹ ở tải baseline; tách latency model/OCR/retrieval và báo số đo.
-- Kết quả E2E và restore có log/screenshot/thời gian chạy thật.
-
-Các ngưỡng là acceptance targets. Không khẳng định toàn hệ thống không thể bị lỗi chỉ vì test đã pass.
-
-
-<a id="section-24"></a>
-
-## 24. Dữ liệu mẫu, fixture và demo trung thực
-
-### 24.1. Hai tenant mẫu bắt buộc
-
-`ward-demo-a` và `ward-demo-b`, nhãn “PHƯỜNG MẪU — DỮ LIỆU KIỂM THỬ”. Không tự seed thông tin cơ quan thật, địa chỉ, số điện thoại, mức phí, thời hạn hoặc cán bộ không được người dùng cung cấp.
-
-Hai tenant có cùng tên một thủ tục giả nhưng nội dung khác nhau để kiểm tra isolation. Có một câu trả lời chỉ tồn tại ở tenant B và không được xuất hiện ở A.
-
-### 24.2. Fixture cần tạo
-
-- Văn bản thuần, FAQ có nguồn, PDF text nhiều trang và PDF scan tiếng Việt do dự án tự tạo.
-- DOCX có heading/bảng; XLSX nhiều sheet, ô gộp, formula không cache và sheet ẩn.
-- PPTX/CSV/HTML nhỏ để kiểm tra parser; file hỏng và loại không hỗ trợ.
-- Một tài liệu hết hiệu lực, một bản thay thế, một bản chưa được duyệt công khai.
-- Một văn bản có prompt injection và một trang HTML có XSS.
-- Website fixture có sitemap, bài mới/sửa/xóa, redirect ra ngoài allowlist và lỗi tạm thời.
-- Connector giả lập có success, timeout-before-send, timeout-after-commit, duplicate key, ownership denied.
-- Hai citizen test identities ở IdP/test harness; không đưa khóa bypass vào public app.
-- Dữ liệu đánh giá với expected evidence IDs và expected authorization behavior.
-
-Tất cả fixture có mô tả rõ là dữ liệu giả. Test tài liệu phải dùng file thật trong fixture, không chỉ mock parser trả chuỗi cố định.
-
-### 24.3. Mock AI
-
-MockAdapter dùng response ổn định theo fixture và trace, phục vụ UI/integration khi thiếu API key. Không giả rằng model thật đã hiểu tài liệu.
-
-UI có banner “MÔI TRƯỜNG THỬ NGHIỆM — CHƯA KẾT NỐI AI THẬT”. Production không cho dùng Mock. Báo cáo chất lượng luôn tách `mock_contract_tests` và `live_ai_evaluation`.
-
-Mock embeddings chỉ phục vụ kiểm tra đường đi dữ liệu; không dùng kết quả đó để nghiệm thu chất lượng vector search. Có lexical retrieval thật ở local để kiểm thử nguồn.
-
----
-
-<a id="section-25"></a>
-
-## 25. Thứ tự triển khai và Definition of Done từng milestone
-
-Không làm toàn bộ giao diện trước rồi mới thêm backend. Phát triển theo lát cắt chạy xuyên suốt; mỗi milestone có code, migration, tests, UI hoạt động và cập nhật trạng thái.
-
-### M0 — Nền tảng và cách ly
-
-**Làm:** monorepo, dependency locks, Docker, env validation, migrations, TenantContext/RLS, CLI provision, admin auth cơ bản, Mock/OpenAI adapter interfaces, error envelope.
-
-**Chứng minh:** hai tenant thật trong PostgreSQL; app runtime role không đọc chéo; thiếu context không đọc được; production từ chối Mock/secrets mặc định; boot scripts hoạt động hoặc báo rõ môi trường thiếu Docker.
-
-**Chưa gọi là sản phẩm hoàn chỉnh.** Không bỏ test RLS với lý do sẽ làm sau.
-
-### M1 — Lát cắt đầu tiên chạy hoàn chỉnh
-
-**Làm:** Admin login → nhập Knowledge văn bản → lưu nháp → kiểm tra tối thiểu có hiệu lực → publish immutable release → mở trang chat/iframe → hỏi → retrieval từ tài liệu đúng tenant → câu trả lời có nguồn → feedback.
-
-Cả AI adapter thật lẫn Mock phải có đường gọi. Khi không có key, live test ghi not-run; Mock chỉ phục vụ local. Chọn model hoàn toàn từ server.
-
-**Chứng minh:** Playwright flow của Admin A, public A và public B; nguồn khác nhau đúng; tài liệu nháp không lộ; publish/rollback cơ bản an toàn; model field injection bị từ chối.
-
-Đây là ưu tiên sớm nhất để người dùng nhìn được hệ thống đang tiến triển, không phải thu hẹp phạm vi cuối.
-
-### M2 — File Knowledge và RAG đầy đủ
-
-**Làm:** upload, antivirus integration, PDF/DOCX/XLSX/PPTX/TXT/MD/CSV/HTML/ảnh, OCR, review, versioning, pgvector, hybrid retrieval, evidence locator, purge/thu hồi.
-
-**Chứng minh:** fixture thật từng loại, coverage trang/sheet, idempotent worker, permission trước retrieval, false citation bị chặn, bản bị thu hồi không còn dùng.
-
-### M3 — Website, Builder và releases nâng cao
-
-**Làm:** website sync/diff/schedule, Admin screens đầy đủ, Playground trace an toàn, evaluation datasets, preflight publish, optimistic locking, runtime fingerprint revalidation.
-
-**Chứng minh:** sửa website tạo version chờ duyệt; SSRF tests; rollback không khôi phục tài liệu/quyền thu hồi; bộ regression gắn đúng draft hash.
-
-### M4 — Công dân xác thực và Actions
-
-**Làm:** OIDC adapter, top-level personal chat, Action registry/gateway, schema validation, proposals/confirmation, idempotency, outbox execution, reconciliation, dry-run Preview.
-
-**Chứng minh:** ownership checks, double confirm, timeout-after-commit, unknown outcome, không giả lập dữ liệu thật. Nếu chưa có API/IdP thật, sandbox pass nhưng live integration vẫn `blocked_external_dependency`.
-
-### M5 — Các Capabilities còn lại và extensions
-
-**Làm:** Web Search với nguồn hạn chế; attachments; Code Interpreter; image generation; STT/TTS; extension/MCP adapter có kiểm soát.
-
-**Chứng minh:** adapter contract tests, trạng thái not_configured/incompatible đúng, artifact ACL, no secrets, quota. Live smoke tests cho những khả năng Developer đã cấp key/model thật; không đánh dấu toàn bộ verified nếu chỉ có Mock.
-
-### M6 — Quota, usage, analytics và vận hành nội dung
-
-**Làm:** cost ledger, pricing catalog, atomic reservation, dashboard Admin không lộ model, audit, retention jobs, incident pause/revoke.
-
-**Chứng minh:** concurrent quota test, unknown pricing, redaction, purge, budget alerts và developer-only detailed analytics.
-
-### M7 — Hardening, triển khai và kiểm thử hệ thống
-
-**Làm:** MFA production, security scans, browser mobile/accessibility, tải/soak, deployment docs, backup/restore, CI, monitoring/runbooks.
-
-**Chứng minh:** test report có logs; restore có kết quả; không chạy development services ở production; không có endpoint/model secret leak; danh sách rủi ro còn lại được ghi.
-
-### M8 — UAT và sẵn sàng vận hành thật
-
-**Làm:** tích hợp API/IdP thật được cấp, xác nhận domain/hạ tầng/data policy, nạp tri thức đã được phường kiểm duyệt, đánh giá nghiệp vụ, live smoke, thủ tục bàn giao.
-
-**Chứng minh:** go-live gates mục 19.4; UAT sign-off của đơn vị. Nếu chưa có đầu vào bên ngoài thì không thể đánh dấu M8 hoàn tất chỉ bằng mock.
-
-### 25.1. Cách xử lý công việc qua nhiều phiên Codex
-
-Ở mỗi phiên, đọc `IMPLEMENTATION_STATUS.md`, test report và Git diff, tiếp tục task chưa đạt ưu tiên cao nhất. Không hỏi lại “có muốn làm tiếp không” sau từng module trong phạm vi đã được giao.
-
-Khi giới hạn phiên làm việc không cho hoàn thành tất cả, giữ repo chạy được tại milestone hiện tại; ghi `docs/RESUME.md` gồm file đang sửa, tests fail/blocked và task kế tiếp cụ thể. Không báo hoàn thành tổng thể, không để security TODO được lờ đi.
-
----
-
-<a id="section-26"></a>
-
-## 26. Hồ sơ bàn giao và báo cáo thực thi
-
-### 26.1. Bộ tài liệu Codex phải tạo
-
-| File | Yêu cầu nội dung |
+| Nhóm | Hành vi |
 |---|---|
-| `README.md` | Sản phẩm, prerequisites, quickstart Windows/Linux, URLs và tài khoản local |
-| `AGENTS.md` | Ràng buộc cốt lõi và lệnh quality gates, ngắn gọn |
-| `docs/ARCHITECTURE.md` | Module, data flows, tenant trust boundaries |
-| `docs/DECISIONS.md` | Quyết định chọn stack/RAG/auth và lý do |
-| `docs/DATABASE.md` | ERD, bảng, keys, RLS, migrations, vector profiles |
-| `docs/API.md` | OpenAPI location, auth, error, pagination, SSE |
-| `docs/SECURITY.md` | Threat model, secrets, privacy, file/crawler/Action controls |
-| `docs/ADMIN_GUIDE.md` | Hướng dẫn thao tác từ upload đến publish, không có chọn model |
-| `docs/DEPLOYMENT.md` | Docker, TLS/domain, secrets, các phương án hạ tầng |
-| `docs/OPERATIONS.md` | Backup/restore, incident, pause/revoke, thay Admin |
-| `docs/EXTERNAL_DEPENDENCIES.md` | IdP/API/model/hosting approvals chưa có, tác động |
-| `docs/DEPENDENCIES.md` | Version locks, license review, security considerations |
-| `docs/IMPLEMENTATION_PLAN.md` | Milestones và task map |
-| `docs/IMPLEMENTATION_STATUS.md` | Trạng thái từng REQ/CAP/UI/milestone và bằng chứng |
-| `docs/TEST_REPORT.md` | Test thực chạy, command, môi trường, pass/fail/not-run |
-| `docs/RESUME.md` | Điểm nối tiếp cho phiên code kế tiếp |
+| /auth/admin/*, /auth/me, /auth/logout | Session Admin, password, MFA, recovery/session revoke |
+| /admin/assistant, /draft | Cấu hình nội dung và optimistic revision |
+| /admin/knowledge/documents, /texts, /versions | List/filter/page/detail và văn bản/version |
+| /admin/knowledge/uploads, /jobs/{id}, /retry | Multipart batch idempotent, job status/retry |
+| /admin/knowledge/versions/{id}/metadata, /review, /original | Review/metadata revision và original private |
+| /admin/knowledge/.../approve-public, /revoke, /delete-request, /deletions | Approval, revoke, purge status |
+| /admin/releases/validate, /releases, /{id}/rollback | Preflight, publish/history/rollback |
+| /admin/assistant/pause, /dashboard, /audit | Điều khiển và tổng quan trong tenant |
+| /public/assistants/{key}, /sessions | Cấu hình công khai tối thiểu và session ẩn danh |
+| /admin/assistant/preview/sessions | Preview gắn phiên Admin/revision |
+| /chat/sessions/{id}/turns | POST idempotent, 202 + turn ID; một live turn/session |
+| /chat/turns/{id}, /events, /cancel, /feedback | Result/SSE recovery/cancel/feedback theo session |
+| /sources/{citation_id} | Source excerpt theo citation ownership và policy hiện tại |
+| /health/live, /health/ready | Liveness/readiness tối thiểu, không secrets |
 
-Không tạo document dày chỉ để bù việc chưa có code. Mỗi hạng mục hoàn tất phải trỏ tới source/test/evidence.
+Session ẩn danh mặc định 2 giờ. Token chỉ lưu hash server-side. Preview hết hiệu lực khi session Admin bị revoke/logout hoặc draft snapshot không còn được phép sử dụng.
 
-### 26.2. Format status
+SSE event ID tăng dần, replay kiểm tra ownership/revocation, heartbeat và reconnect hữu hạn; đọc terminal result khi stream lỗi. Client không tự tạo request_id mới chỉ vì POST timeout; truy hồi cùng request_id để tránh gọi AI trùng.
 
-```text
-Requirement: REQ-10
-Status: implemented_and_tested
-Implementation: <paths>
-Tests: <test names and actual results>
-Limitations: <specific limitations or none>
-Next action: <specific action>
-```
+HTTP errors: 401 phiên không hợp lệ, 403 cấm, 404 resource ngoài phạm vi, 409 stale/conflict/paused, 413 quá lớn, 422 schema, 429 giới hạn, 503 dependency/AI unavailable. Error envelope có code/message/request_id/retryable, không raw SQL/provider error. Bổ sung mã BUDGET_EXCEEDED/PRICING_UNAVAILABLE khi cần, có backward compatibility.
 
-Các trạng thái cho phép: `not_started`, `in_progress`, `implemented_not_tested`, `implemented_and_tested`, `blocked_external_dependency`. Thêm `live_verified` cho tích hợp đã thử thật; không dùng dấu tick mơ hồ.
+Những field cũ về attachments/needs_login/capabilities nếu giữ tương thích phải bị khóa giá trị an toàn. Không cần xóa bảng hoặc breaking API để loại chức năng chưa dùng; public/admin DTO không quảng bá chức năng ngoài phạm vi.
 
-### 26.3. Báo cáo cuối mỗi phiên code
+## 09. Bảo mật, riêng tư và giới hạn chi phí
 
-Nêu:
-- Milestone vừa thực hiện và những file chính thay đổi.
-- Các lệnh test đã chạy cùng kết quả; test chưa chạy phải nói chưa chạy.
-- Cách mở phần đang hoạt động bằng URL/lệnh cụ thể.
-- Phần còn thiếu và phụ thuộc thật.
-- Task kế tiếp để tiếp tục từ repo hiện tại.
+### 09.1. Các yêu cầu phi chức năng
 
-Không đưa key/password vào báo cáo công khai. Nếu có dữ liệu local cấp lần đầu, chỉ hướng dẫn lấy an toàn trong môi trường local.
+| Mã | Yêu cầu |
+|---|---|
+| NFR-01 | Cách ly tenant và ownership xuyên DB, worker, source, SSE, object/cache |
+| NFR-02 | Bảo mật Admin, secrets/DTO, TLS/CSP/CSRF và parser/upload |
+| NFR-03 | Câu trả lời có bằng chứng, kiểm thử chất lượng AI thật và dữ liệu có thẩm quyền |
+| NFR-04 | Độ bền outbox/worker, idempotency, recovery và thu hồi hiện hành |
+| NFR-05 | Hiệu năng được đo trên workload/hạ tầng rõ ràng, tách platform/provider/OCR |
+| NFR-06 | Kiểm soát lạm dụng/chi phí, không vượt đồng thời do race trong ứng dụng |
+| NFR-07 | Tối thiểu hóa dữ liệu, retention và deletion/restore nhất quán |
+| NFR-08 | Khả năng sử dụng/accessibility và nhúng khác origin |
+| NFR-09 | Triển khai tái lập, backup/restore, monitoring và runbooks |
+| NFR-10 | Báo cáo trung thực, truy vết yêu cầu/phiên bản/test và phân biệt local/live/UAT |
 
----
+Admin production dùng MFA TOTP, recovery codes hash, secret mã hóa bằng key vận hành, reset có xác minh và audit; không endpoint public reset bỏ qua xác thực. Một Admin active không có nghĩa dùng chung mật khẩu.
 
-<a id="section-27"></a>
+Không log prompt/câu hỏi đầy đủ/token/PII theo mặc định. Metrics dùng ID kỹ thuật với cardinality được kiểm soát; lỗi được redact. Admin feedback UI che thông tin cá nhân; không xây chức năng đọc toàn bộ hội thoại nhạy cảm.
 
-## 27. Điều kiện không được bỏ qua khi thiếu đầu vào thực tế
+Người dân có thể tự nhập PII dù chatbot không yêu cầu. Tối thiểu hóa context gửi AI, che các mẫu nhận diện rõ trước gửi/lưu theo policy, thông báo giới hạn; không hứa phát hiện mọi PII. Nguồn nội bộ/restricted không đưa vào kho public, không gửi provider ngoài bằng Preview.
 
-| Đầu vào chưa có | Cách phát triển ngay | Cách hiển thị/khóa production |
+### 09.2. Sử dụng và ngân sách tối thiểu
+
+Không làm BI tài chính sâu, nhưng production phải có giới hạn request, số turn active, usage ledger và budget backend.
+
+- Rate limits theo IP đã xử lý trust proxy, session và tenant; daily/monthly limit cho tenant và global do Developer đặt.
+- Baseline ban đầu để đo: 5 turn/phút/session, 30 turn/phút/IP, 120 turn/phút/tenant, 1 active turn/session; ngưỡng cấu hình lại sau benchmark. IP NAT không phải một người; lỗi có Retry-After.
+- Mỗi lời gọi có thể tính phí: reserve atomic theo operation ID, maximum input/output/embedding units; kiểm tra phần dư trước gọi; reconcile usage thực sau kết quả.
+- Retry, query embedding và indexing đều tính vào ledger; budget indexing tách chat để upload không làm cạn quota trả lời ngoài dự kiến.
+- Không có bảng giá đã xác minh thì hiển thị unknown/unpriced; không coi là 0. Production paid operation thiếu pricing/budget phải fail closed; local Mock không bị giả là live cost.
+- Crash/timeout có thể đã bị tính phí: giữ reservation trạng thái unknown, đối soát rồi mới giải phóng; không retry mù hoặc hoàn tiền chắc chắn.
+- Redis unavailable: chặn tạo paid operations mới nếu không còn kiểm soát; result đã lưu vẫn có thể đọc theo ACL.
+- Admin chỉ thấy lượt dùng/hạn mức/trạng thái phù hợp, không model/provider/key. Operator có số liệu kỹ thuật riêng.
+- Budget ứng dụng cần kèm giới hạn/cảnh báo provider nếu có; không cam kết hóa đơn bên ngoài tuyệt đối bằng số ước tính nội bộ.
+
+### 09.3. Retention và backup
+
+Mặc định lập kế hoạch, phải được đơn vị duyệt trước public:
+
+| Dữ liệu | Mặc định |
+|---|---|
+| Raw chat và feedback text | Tối đa 30 ngày; giảm thêm nếu mục đích không cần |
+| Phiên/token ẩn danh | Hết hạn 2 giờ; dọn theo lịch, không dùng hết hạn phiên để coi raw chat đã xóa |
+| Audit đã che nội dung | 180 ngày |
+| Usage tổng hợp không PII | 365 ngày |
+| File tạm parser | Dọn ngay khi job xong/lỗi; sweeper tối đa 24 giờ |
+| Backup mã hóa | Luân chuyển tối đa 30 ngày, có deletion ledger |
+| Tri thức đang dùng | Giữ theo vòng đời nội dung/đơn vị; thu hồi và purge là thao tác riêng |
+
+Jobs idempotent, batch có hạn, metric backlog, dry-run và kiểm tra chéo tenant. Backup tách nơi lưu và quyền truy cập; keys phục hồi được quản lý riêng. Provider retention được kiểm tra theo dịch vụ/hợp đồng thực dùng; store=false không tự có nghĩa không có lưu giữ ở mọi lớp.
+
+## 10. Chất lượng AI và bộ nguồn
+
+### 10.1. Thu thập nguồn
+
+Chọn nguồn do cơ quan có thẩm quyền công bố. Với mỗi file lưu URL trang công bố, URL file, cơ quan/phạm vi, ngày thu thập, SHA256, số/hiệu lực nếu có, quan hệ văn bản thay thế và trạng thái review.
+
+Tài liệu từ hai địa phương chỉ dùng trong tenant tương ứng; nguồn quốc gia muốn dùng chung phải được nạp/version/duyệt rõ ở mỗi tenant trong v2, không thêm kho global bỏ qua RLS.
+
+Có thể tự tìm và tải nguồn công khai cho local test. Việc này là chuẩn bị corpus có giới hạn, không phải tính năng crawler. Download thủ công hoặc script allowlist được kiểm soát, kiểm MIME/size/redirect; không tự fetch source_url do Admin nhập trong API.
+
+Các nguồn đã tìm thấy để tuyển chọn, chưa chứng nhận hiệu lực hay chất lượng toàn bộ file:
+- [Thủ tục khai sinh trên Cổng DVCQG](https://dichvucong.gov.vn/p/home/dvc-chi-tiet-thu-tuc-dung-chung.html?ma_thu_tuc=1.001193).
+- [Công báo Chính phủ: trang Nghị định 301/2026/NĐ-CP, PDF/DOCX](https://congbao.chinhphu.vn/van-ban/nghi-dinh-so-301-2026-nd-cp-470197.htm).
+- [UBND Xuân Định: danh mục công khai có PDF/XLSX](https://xuandinh.dongnai.gov.vn/vi/news/bo-thu-tuc-hanh-chinh/cong-khai-danh-muc-thu-tuc-hanh-chinh-thuoc-tham-quyen-giai-quyet-cua-ubnd-cap-xa-916.html).
+
+Corpus mục tiêu đầu: tối thiểu 20 tài liệu, 5 nhóm nội dung và hai tenant; đủ các dạng PDF text, scan tiếng Việt, DOCX, XLSX và text/FAQ. Định dạng khó chưa có nguồn public phù hợp dùng fixture có nhãn riêng, không trình bày fixture là văn bản chính thức.
+
+### 10.2. Evaluation
+
+Bộ regression ban đầu >=50 case; trước P5 >=200 case, có review nghiệp vụ. Baseline phân bố: 100 câu có đáp án, 30 câu tiếp nối/mơ hồ, 25 ngoài phạm vi/không có nguồn/cá nhân, 20 nguồn hết hiệu lực/thu hồi/mâu thuẫn, 25 adversarial/cách ly/prompt injection. Retrieval recall đo trên subset có expected evidence.
+
+Mỗi case có ID, tenant, question/history, expected behavior, required facts, allowed evidence version/locator, forbidden claims, mức nghiêm trọng, nguồn căn cứ, người review. Tách bộ development với holdout ít nhất 20%; không dùng đáp án đánh giá làm nguồn retrieval.
+
+Mỗi lần chạy ghi dataset/corpus/draft/release/runtime/embedding fingerprint, ngày giờ, cấu hình nonsecret, usage/cost, latency, raw result đã làm sạch và người chấm. Không dùng model tự chấm làm bằng chứng duy nhất. Contract test/Mock vector chỉ chứng minh đường đi dữ liệu.
+
+### 10.3. Ngưỡng nghiệm thu
+
+| Chỉ tiêu | Mục tiêu |
+|---|---|
+| Rò tenant/secret, public dùng draft/revoked, thực thi nghiệp vụ ngoài phạm vi | 0 lỗi trong bộ kiểm tra bắt buộc |
+| Citation hiển thị resolve đúng quyền/version/locator | 100% trên tập đánh giá |
+| Retrieval recall@8 trên subset có đáp án | >=90% |
+| Đúng và đủ nghiệp vụ theo rubric con người | >=95% trên subset có đáp án, công bố số mẫu/mẫu số |
+| Từ chối/hỏi rõ đúng ở subset tương ứng | >=95%, công bố từng nhóm |
+| Mọi phát biểu thực chất được nguồn hỗ trợ (groundedness) | >=95% theo rubric và người chấm |
+| Lỗi trọng yếu về phí/thời hạn/đầu mối/khẳng định nghiệp vụ đã thực hiện | 0 lỗi chưa xử lý trong bộ nghiệm thu |
+
+Case an toàn fail chặn go-live dù điểm trung bình đạt. Không diễn giải tỷ lệ trên dataset thành bảo đảm đúng với mọi câu hỏi. Không hạ mục tiêu bằng cách loại các case khó sau khi xem kết quả; thay dataset phải version và lý do.
+
+## 11. Hiệu năng và độ ổn định
+
+### 11.1. Workload baseline
+
+Dùng để thiết kế bài đo, chưa phải lưu lượng cam kết: 10 tenant, tổng 100.000 chunks (khoảng 10.000/tenant), 30 turn chat đang xử lý đồng thời trên hệ thống; một tenant nóng nhận ít nhất 50% tải. Kho có dữ liệu thật và fixture có nhãn, vector/filter/approval/revocation thực.
+
+Báo cáo cấu hình CPU/RAM/disk/network, số worker và DB pool, corpus/profile, request rate, active turns, thời gian warm-up/đo, errors, queue và percentiles. Concurrency không đồng nghĩa request/giây. Không mặc định stack local hiện tại chịu được workload này.
+
+### 11.2. Mục tiêu kiểm tra
+
+| Hạng mục | Mục tiêu thiết kế |
+|---|---|
+| Endpoint nhẹ/create-turn không gồm model | p95 <=1 giây ở tải baseline |
+| Retrieval DB sau khi có query vector | p95 <=500 ms trên corpus baseline |
+| Chờ queue chat | p95 <=5 giây; backlog giảm về bình thường sau burst |
+| Kết quả cuối với adapter latency cố định 2 giây | p95 <=15 giây, bài đo platform-only |
+| Live chat | Mục tiêu p95 <=30 giây trên mẫu được phép; báo riêng provider/embedding/queue; chưa đạt phải tối ưu/đổi cấu hình có đánh giá trước nghiệm thu |
+| Lỗi ngoài chủ đích | <1% trong workload hợp lệ; báo riêng 429 chủ động và provider error, không bỏ chúng khỏi báo cáo |
+| Độ bền | 30 phút tải baseline + 2 giờ soak với adapter mô phỏng, không leak pool/memory hoặc job mất |
+| Backup/restore | RPO mục tiêu <=24 giờ, RTO <=4 giờ, phải đo restore thật |
+
+Cấu hình benchmark giả lập không được gọi là số đo AI thật. Live benchmark opt-in và có ngân sách. OCR/ingestion đo riêng PDF text/scan/XLSX ở các kích thước 10/50/100 trang hoặc số hàng tương ứng; công bố thời gian/tài nguyên, không hứa SLA xử lý file khi chưa có số đo. Trong lúc OCR chạy, endpoint chat vẫn phải được đo để tránh tranh tài nguyên.
+
+Nếu chưa có hạ tầng được chọn, kết quả local chỉ là baseline kỹ thuật. RPO 24 giờ là lựa chọn cho single-host nhỏ, thay mục tiêu đề xuất 1 giờ của v1; nhu cầu mất dữ liệu ít hơn đòi PITR/incremental và phải bổ sung kế hoạch.
+
+## 12. Triển khai, sự cố và các cổng nghiệm thu
+
+### 12.1. Deployment
+
+Local chỉ bind localhost, giữ scripts Windows/Linux. Production dùng images khóa version/digest, non-root, không source mount/dev server, secrets riêng, TLS/DNS chính xác, firewall, volumes và resource/restart limits. API/worker không dùng migration credential; migrate là one-shot.
+
+Single-host Compose là phương án đầu, có điểm lỗi đơn và downtime khi host hỏng. Không tự tạo cloud resource hoặc mở internet để chứng minh hoàn thành.
+
+Production hiện bị khóa vô điều kiện trong config.py. Chỉ thay khóa này bằng validation production có kiểm thử khi P4 đạt; đổi số milestone trong thông báo hoặc xóa validator không phải hoàn thành vận hành.
+
+### 12.2. Backup/restore và rollout
+
+Backup DB + object manifest/objects + schema/config version + deletion ledger. Mã hóa, lưu tách host/quyền, kiểm integrity và inventory. Restore sang môi trường cách ly, kiểm RLS/tenant/source/object/release/usage/deletion trước mở traffic; tắt tự gọi paid AI trong drill.
+
+Migration tiến có preflight/backup, phương án rollback ứng dụng tương thích schema; không dùng reset/drop/downgrade phá dữ liệu để chữa lỗi. Pilot 1–2 tenant trước, theo dõi 7 ngày là baseline quan sát, rồi mới mở rộng theo bằng chứng.
+
+Runbooks: AI 429/outage, hết ngân sách, queue backlog, storage/DB full, OCR/scanner lỗi, tài liệu sai, nghi rò tenant, mất Admin/MFA, restore và đổi runtime. Mỗi cảnh báo có người nhận và hành động rõ.
+
+### 12.3. Các gate
+
+| Gate | Điều kiện | Bằng chứng |
 |---|---|---|
-| API key và model ID | Adapter thật + Mock local + contract tests | Không giả live AI; yêu cầu Developer cấu hình |
-| Nguồn tài liệu chính thức | Fixture tự tạo, label demo | Không publish fixture như thông tin phường |
-| Website/CMS cụ thể | Generic connector + website fixture | Admin chỉ dùng domain đã được Developer cấp |
-| IdP chính thức | OIDC adapter + test IdP | Personal mode không hoạt động nếu chưa cấu hình |
-| API trạng thái hồ sơ | Connector contract + fixture sandbox | Báo chưa tích hợp, không kết quả giả |
-| API gửi phản ánh/đặt lịch | Proposal/execution framework + sandbox | Không gửi đến endpoint đoán ra |
-| Hosting/domain/cert | Local Compose + production templates | Không tự public máy phát triển |
-| Phê duyệt dữ liệu cá nhân | Data minimization + gates | Không xử lý hồ sơ thật qua provider ngoài |
-| Pricing/cost limits | Metering + catalog interface | Unknown pricing rõ ràng; policy do Developer chốt |
+| G0 — Phạm vi | Bộ tài liệu nhất quán, OUT không bị tính là thiếu sản phẩm, backlog truy vết | Spec/plan/checklist và bản lưu v1 |
+| G1 — Chức năng local | Toàn luồng hai tenant, các loại file, review/publish/chat/source/revoke/purge, Mock có nhãn | Backend/E2E/PostgreSQL/worker/scanner thật |
+| G2 — AI và nội dung | Corpus có nguồn, model thật, >=200 case trước go-live, đạt ngưỡng và review nghiệp vụ | Evaluation report theo fingerprint, live usage |
+| G3 — Nhúng | Hai origin mô phỏng, cookie bên thứ ba bị chặn vẫn chat, domain/CSP/ownership đạt | Browser report + hướng dẫn đội cổng |
+| G4 — Vận hành | MFA, budget/rate, retention, scan bảo mật, tải/soak, backup/restore, production config | Test/load/security/restore reports và runbooks |
+| G5 — Nghiệm thu | Domain/TLS/hạ tầng/data policy/nguồn công khai được đơn vị duyệt, cổng thật và pilot đạt | Biên bản UAT/bàn giao và người vận hành |
 
-Các đầu vào này không ngăn việc xây codebase, nhưng ảnh hưởng việc kiểm thử thật và go-live. Phân biệt **code đã triển khai**, **đã được cấu hình**, **đã kiểm thử live** và **đã được chấp thuận vận hành**.
+G1 đạt cho phép gọi hoàn thiện chức năng local trong phạm vi; G1–G4 cho phép gọi sẵn sàng kỹ thuật cho pilot khi môi trường tương ứng được duyệt; chỉ G0–G5 đạt mới gọi hoàn thành bản vận hành theo v2. Không cần OIDC, connector hồ sơ, voice/MCP hoặc crawler để đạt các gate này.
 
----
+## 13. Lộ trình và quản lý thay đổi
 
-<a id="section-28"></a>
-
-## 28. Checklist tự rà soát trước khi Codex kết thúc
-
-- [ ] Đọc hết đặc tả và cập nhật plan/status, không chỉ đoạn đầu.
-- [ ] Model/provider/AI keys chỉ nằm ở technical config, không ở Admin DTO/UI.
-- [ ] Chạy được ít nhất lát cắt M1 nếu đang bàn giao giai đoạn đầu.
-- [ ] Có hai tenant và test không đọc chéo bằng PostgreSQL runtime role.
-- [ ] Admin upload/nhập văn bản tạo tri thức thật, không chỉ lưu tên file.
-- [ ] Draft và published phân biệt; nguồn dẫn đúng version/locator.
-- [ ] Thu hồi/rollback/permissions không tạo lỗ hổng truy cập dữ liệu cũ.
-- [ ] Actions không ghi khi chưa xác thực/xác nhận.
-- [ ] Timeout ghi có unknown/reconciliation, không retry mù.
-- [ ] Mock và dữ liệu mẫu được ghi nhãn, bị chặn production.
-- [ ] Provider adapters có xử lý errors/refusal/usage, không hardcode model.
-- [ ] File/crawler/extension không cho thực thi code hoặc SSRF tùy ý.
-- [ ] Đã chạy lint/typecheck/tests thực sự, hoặc ghi lý do chưa chạy.
-- [ ] Có lệnh startup cho Windows/Linux và URL đúng cấu hình.
-- [ ] Không có secret trong Git diff, .env.example, bundle và test reports.
-- [ ] Báo cáo trạng thái trung thực, có task tiếp theo cụ thể.
-
-**Quy tắc kết luận:** Chỉ ghi “sẵn sàng vận hành chính thức” khi M0–M8 và go-live gates đạt. Hoàn tất một scaffold hoặc một luồng demo không tương đương hoàn tất hệ thống.
-
----
-
-<a id="section-29"></a>
-
-## 29. Prompt khởi động có thể gửi nguyên văn cho Codex
-
-```text
-Hãy đọc toàn bộ file CODEX_CHATBOT_DA_PHUONG_MASTER_SPEC.md trong workspace
-và bắt đầu triển khai phần mềm theo đặc tả, không chỉ đưa ra kế hoạch.
-
-Trước tiên kiểm tra repository hiện tại, AGENTS.md và các thay đổi chưa commit;
-không ghi đè hoặc xóa dữ liệu của tôi. Tạo kế hoạch và bảng theo dõi trạng thái,
-sau đó thực hiện M0 và lát cắt M1 chạy xuyên suốt, tiếp tục các milestone theo
-thứ tự khi điều kiện cho phép.
-
-Ràng buộc tuyệt đối: Admin từng phường không có quyền xem/chọn/thay đổi model,
-provider hay API key. Toàn bộ cấu hình AI do Developer đặt ở backend/hạ tầng.
-Admin chỉ quản lý Instructions, Knowledge, Capabilities/Actions được cấp,
-Preview và Publish.
-
-Ưu tiên code thật có database, API, UI và tests; không làm UI tĩnh hoặc hàm
-trả success giả. Thiếu key/API nghiệp vụ thì dùng adapter/fixture được ghi
-nhãn trong local và khóa phần chưa được cấu hình ở production.
-
-Sau khi code, chạy các kiểm thử thực tế, sửa lỗi, cập nhật tài liệu và cho
-tôi các lệnh chạy trên Windows PowerShell. Báo rõ phần hoàn thành, phần chưa
-hoàn thành và test chưa chạy. Không yêu cầu tôi chốt lại các quyết định đã
-được ghi trong đặc tả.
-```
-
----
-
-<a id="section-30"></a>
-
-## 30. Nguồn kỹ thuật và cách sử dụng nguồn
-
-Các nguồn dưới đây được đối chiếu ngày **10/11/2026**. Chúng xác nhận hợp đồng/cơ chế của nhà cung cấp; các lựa chọn kiến trúc, ngưỡng, schema nội bộ và milestone trong tài liệu là thiết kế riêng cho dự án, không phải tuyên bố của nhà cung cấp.
-
-Khi viết code, Codex phải kiểm tra lại tài liệu tương ứng với SDK/model/version thực tế rồi khóa dependency. Không sao chép ví dụ có model name từ tài liệu thành lựa chọn cho Admin phường.
-
-| Mã | Tài liệu chính thức | Dùng để kiểm tra |
+| Giai đoạn | Mục tiêu | Nguồn kế thừa |
 |---|---|---|
-| R01 | [Codex: AGENTS.md][R01] | Hướng dẫn repository, giới hạn và cách đọc |
-| R02 | [OpenAI: Responses API][R02] | Output items, request/response và tools |
-| R03 | [OpenAI: Function calling][R03] | Schema, strict mode, call IDs |
-| R04 | [OpenAI: Structured Outputs][R04] | Schema output, refusal, các giới hạn |
-| R05 | [OpenAI: Data controls][R05] | Retention, store, endpoint/capability policies |
-| R06 | [OpenAI: File Search][R06] | Hosted retrieval và các định dạng hỗ trợ |
-| R07 | [OpenAI: Web Search][R07] | Domain filtering, sources/annotations |
-| R08 | [OpenAI: Code Interpreter][R08] | Hosted sandbox/container |
-| R09 | [OpenAI: Image generation tool][R09] | Tạo ảnh qua API/tool |
-| R10 | [PostgreSQL 17: Row Security Policies][R10] | RLS, owner/superuser/BYPASSRLS |
-| R11 | [pgvector: README chính thức][R11] | Dimensions, vector search, filtering/ANN |
-| R12 | [Node.js: Releases][R12] | LTS và vòng đời runtime |
-| R13 | [OWASP: SSRF Prevention][R13] | URL validation, DNS/redirect/egress |
-| R14 | [OpenAI: Speech to text][R14] | Transcription API |
-| R15 | [OpenAI: Text to speech][R15] | TTS và yêu cầu sử dụng |
-| R16 | [OpenAI: MCP servers][R16] | Tools bên ngoài, approvals/trust |
-| R17 | [OpenAI: API pricing][R17] | Rate card khi cấu hình thật |
-| R18 | [Docker: Compose in production][R18] | Development/production configuration |
+| P0 | Chốt tài liệu, truy vết hiện trạng, tiêu chí và backlog | Rà soát v1, không code ứng dụng |
+| P1 | Hoàn thiện tri thức/tài liệu và vòng đời | M0–M2 hiện có + khoảng trống thực |
+| P2 | Hỏi đáp có nguồn, chất lượng AI và Admin tối thiểu | M1/M2 + phần cần thiết M3 |
+| P3 | Nhúng khác origin vào cổng thông tin | Widget hiện có + domain/CSP/mobile |
+| P4 | Bảo mật, chi phí cơ bản, hiệu năng, backup/triển khai | Phần thiết yếu M6/M7, không BI lớn |
+| P5 | Live/UAT/pilot/bàn giao đúng phạm vi | M8 rút gọn, không phụ thuộc IdP/API nghiệp vụ |
 
-[R01]: https://developers.openai.com/codex/guides/agents-md
-[R02]: https://developers.openai.com/api/reference/responses/overview
-[R03]: https://developers.openai.com/api/docs/guides/function-calling
-[R04]: https://developers.openai.com/api/docs/guides/structured-outputs
-[R05]: https://developers.openai.com/api/docs/guides/your-data
-[R06]: https://developers.openai.com/api/docs/guides/tools-file-search
-[R07]: https://developers.openai.com/api/docs/guides/tools-web-search
-[R08]: https://developers.openai.com/api/docs/guides/tools-code-interpreter
-[R09]: https://developers.openai.com/api/docs/guides/tools-image-generation
-[R10]: https://www.postgresql.org/docs/17/ddl-rowsecurity.html
-[R11]: https://github.com/pgvector/pgvector
-[R12]: https://nodejs.org/en/about/previous-releases
-[R13]: https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
-[R14]: https://developers.openai.com/api/docs/guides/speech-to-text
-[R15]: https://developers.openai.com/api/docs/guides/text-to-speech
-[R16]: https://developers.openai.com/api/docs/guides/tools-connectors-mcp
-[R17]: https://developers.openai.com/api/docs/pricing
-[R18]: https://docs.docker.com/compose/how-tos/production/
+Chi tiết task/dependency/đầu ra/điều kiện dừng ở docs/IMPLEMENTATION_PLAN.md. Có thể chuẩn bị corpus và local kiểm thử khi chưa có key/domain; không đánh dấu phần live/UAT đạt bằng Mock.
 
----
+Bổ sung lại OUT-01–OUT-08 phải có yêu cầu thay đổi riêng, đánh giá thời gian/chi phí/quyền/dữ liệu và sửa tiêu chí trước code. Không làm phát sinh phạm vi chỉ để giữ số milestone cũ.
 
-**Tóm tắt quyết định cuối:** Xây nền tảng chatbot đa phường có Admin Builder,
-Knowledge versioning/RAG, Capabilities, Action Gateway và vận hành production.
-Admin phường quản lý nội dung và tri thức; Developer quản lý công nghệ AI.
-Không thay đổi ranh giới này trong bất kỳ bước triển khai nào.
+## 14. Đầu vào cần đến đúng giai đoạn
+
+| Đầu vào | Thời điểm cần | Công việc vẫn làm được trước đó |
+|---|---|---|
+| Địa phương mục tiêu, đầu mối review | Trước corpus nghiệm thu địa phương/P5 | Corpus công khai có nhãn theo địa phương, fixture và chức năng local |
+| Key/model/pricing/ngân sách, phép gửi dữ liệu | Trước paid/live evaluation P2, trước G2 | Contract tests, retrieval với fixture, UI/worker/local |
+| Domain chatbot và domain cổng, người sửa CSP/snippet | Trước G5 | Hai origin local mô phỏng và tài liệu tích hợp P3 |
+| Hạ tầng/storage/backup/monitoring được chọn | Trước đo vận hành nghiệm thu P4/G4 | Production templates và baseline local không tạo tài nguyên |
+| Policy nguồn/retention/provider và người ký UAT | Trước public P5 | Tài liệu phương án và test bằng corpus được phép |
+
+Không yêu cầu IdP/VNeID/API hồ sơ hoặc connector giao dịch cho phiên bản này. Không xin lại quyết định đã rõ; chỉ hỏi khi dữ liệu cụ thể là điều kiện bắt buộc của bước tiếp theo.
+
+## 15. Quy tắc bằng chứng và bàn giao
+
+- Trạng thái hợp lệ: not_started, in_progress, implemented_local, tested_local, live_verified, accepted_uat, blocked_external_dependency, out_of_scope.
+- Mọi bằng chứng ghi ngày, command, revision/source manifest, environment, dữ liệu, expected/actual, artifact và giới hạn; không secrets.
+- Báo cáo 10/11/2026 có 56 backend tests và 6 Chromium tests là lịch sử local với Mock; chưa được chạy lại ngày lập v2.
+- Hạng mục bị bỏ ghi out_of_scope, không ghi completed. Đổi phạm vi không tự làm tăng số test pass hay gỡ khóa production.
+- Hồ sơ bàn giao: spec/plan/checklist/status, API/schema/DB migrations, Admin/widget/ops guides, data-flow/retention, test/evaluation/load/security/restore reports, domain/config manifest nonsecret, danh sách hạn chế và người phụ trách.
+
+Yêu cầu bổ sung cho restore: deletion ledger/tombstone cần có bản mới nhất được lưu bền vững ngoài snapshot backup đang khôi phục, có kiểm integrity và quyền riêng. Drill phải tạo một yêu cầu xóa sau thời điểm backup, rồi chứng minh restore áp dụng lại yêu cầu xóa đó trước khi mở public; không chỉ đọc ledger cũ nằm trong chính backup.
